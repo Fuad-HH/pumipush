@@ -1,4 +1,5 @@
 #include <Kokkos_Core.hpp>
+#include <Kokkos_Core_fwd.hpp>
 #include <Omega_h_bbox.hpp>
 #include <Omega_h_mesh.hpp>
 #include <fstream>
@@ -68,7 +69,7 @@ void printTiming(const char* name, double t);
 /**
  * Push the particles in the direction of the vector
  */
-void push(PS* ptcls, int np, fp_t distance, fp_t dx, fp_t dy, fp_t dz);
+void push(PS* ptcls, int np, double lambda);
 
 /**
  * Get a random direction uniformly distributed on the unit sphere
@@ -190,7 +191,7 @@ int main(int argc, char* argv[]) {
   Kokkos::TeamPolicy<ExeSpace> policy =
       Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, Kokkos::AUTO());
   // Sell-C-Sigma particle structure: see the pumipic paper for more details
-  PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 1000, ne, setPtcls,
+  PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 10, ne, setPtcls,
                                        ptcls_per_elem, element_gids);
   setInitialPtclCoords(picparts, ptcls);
   setPtclIds(ptcls);
@@ -204,8 +205,8 @@ int main(int argc, char* argv[]) {
   Kokkos::Timer timer;
   Kokkos::Timer fullTimer;
 
-  int iter;
-  int np;
+  int iter; // iteration number
+  int np; // 
   int ps_np;
 
   // ******************* Monte Carlo Transport Simulation ******************* //
@@ -220,9 +221,7 @@ int main(int argc, char* argv[]) {
     }
     timer.reset();
     // 2. push particles
-    double distance = random_path_length(lambda);
-    std::vector<double> dir = getDirection();
-    push(ptcls, np, distance, dir[0], dir[1], dir[2]);
+    push(ptcls, np, lambda); // TODO: move each particle in a random direction
     MPI_Barrier(MPI_COMM_WORLD);
     if (comm_rank == 0)
       fprintf(stderr, "push and transfer (seconds) %f\n", timer.seconds());
@@ -355,33 +354,21 @@ void printTiming(const char* name, double t) {
   fprintf(stderr, "kokkos %s (seconds) %f\n", name, t);
 }
 
-void push(PS* ptcls, int np, fp_t distance, fp_t dx, fp_t dy, fp_t dz) {
+void push(PS* ptcls, int np, double lambda) {
   Kokkos::Timer timer;
   auto position_d = ptcls->get<0>();
   auto new_position_d = ptcls->get<1>();
-
-  const auto capacity = ptcls->capacity();
-
-  fp_t disp[4] = {distance, dx, dy, dz};
-  p::kkFpView disp_d("direction_d", 4);
-  p::hostToDeviceFp(disp_d, disp);
-  fprintf(stderr, "kokkos ps host to device transfer (seconds) %f\n",
-          timer.seconds());
-
-  // o::Write<o::Real> ptclUnique_d(capacity, 0); // ? not sure why they are
-  // adding this
 
   double totTime = 0;
   timer.reset();
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
-      fp_t dir[3];
-      dir[0] = disp_d(0) * disp_d(1);
-      dir[1] = disp_d(0) * disp_d(2);
-      dir[2] = disp_d(0) * disp_d(3);
-      new_position_d(pid, 0) = position_d(pid, 0) + dir[0];
-      new_position_d(pid, 1) = position_d(pid, 1) + dir[1];
-      new_position_d(pid, 2) = position_d(pid, 2) + dir[2];
+      //fp_t dir[3];
+      double distance = random_path_length(lambda);
+      std::vector<double> disp_d = getDirection();
+      new_position_d(pid, 0) = position_d(pid, 0) + distance * disp_d[0];
+      new_position_d(pid, 1) = position_d(pid, 1) + distance * disp_d[1];
+      new_position_d(pid, 2) = position_d(pid, 2) + distance * disp_d[2];
     }
   };
   ps::parallel_for(ptcls, lamb);
@@ -395,9 +382,15 @@ std::vector<double> getDirection() {
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> dis(0, 1);
   std::vector<double> dir(3);
-  dir[0] = dis(gen);
-  dir[1] = dis(gen);
-  dir[2] = std::sqrt(1 - dir[0] * dir[0] - dir[1] * dir[1]);
+  double x = dis(gen);
+  double y = dis(gen);
+
+  double theta = 2.0 * M_PI * x;
+  double phi = acos(2.0 * y - 1.0);
+
+  dir[0] = sin(phi) * cos(theta);
+  dir[1] = sin(phi) * sin(theta);
+  dir[2] = cos(phi);
   return dir;
 }
 
