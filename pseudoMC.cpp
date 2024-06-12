@@ -83,6 +83,7 @@ void updatePtclPositions(PS* ptcls);
 
 /**
  * Rebuild the particle structure with the new element ids
+ * It just calls the *migrate_lb_ptcls* function
  */
 void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output);
 
@@ -136,6 +137,8 @@ int main(int argc, char* argv[]) {
 
   // ******************* Mesh Loading ******************* //
   o::Mesh full_mesh = readMesh(mesh_file_name, lib);
+  o::reorder_by_hilbert(&full_mesh);
+  if (comm_rank == 0) std::cout << "Mesh Hilbert reordered\n";
   std::cout << "Mesh loaded sucessfully with " << full_mesh.nelems()
             << " elements\n\t\t\t"
                "and "
@@ -205,8 +208,8 @@ int main(int argc, char* argv[]) {
   Kokkos::Timer timer;
   Kokkos::Timer fullTimer;
 
-  int iter; // iteration number
-  int np; // 
+  int iter;  // iteration number
+  int np;    //
   int ps_np;
 
   // ******************* Monte Carlo Transport Simulation ******************* //
@@ -221,7 +224,7 @@ int main(int argc, char* argv[]) {
     }
     timer.reset();
     // 2. push particles
-    push(ptcls, np, lambda); // TODO: move each particle in a random direction
+    push(ptcls, np, lambda);
     MPI_Barrier(MPI_COMM_WORLD);
     if (comm_rank == 0)
       fprintf(stderr, "push and transfer (seconds) %f\n", timer.seconds());
@@ -249,7 +252,7 @@ int main(int argc, char* argv[]) {
 
   // cleanup
   delete ptcls;
-  
+
   pumipic::SummarizeTime();
   if (!comm_rank) fprintf(stderr, "done\n");
   return 0;
@@ -363,7 +366,7 @@ void push(PS* ptcls, int np, double lambda) {
   timer.reset();
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
-      //fp_t dir[3];
+      // fp_t dir[3];
       double distance = random_path_length(lambda);
       std::vector<double> disp_d = getDirection();
       new_position_d(pid, 0) = position_d(pid, 0) + distance * disp_d[0];
@@ -418,14 +421,14 @@ void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output) {
   };
   ps::parallel_for(ptcls, printElmIds);
 
-  PS::kkLidView ps_elem_ids("ps_elem_ids", ps_capacity);
-  auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
-    if (mask) {
-      int new_elem = elem_ids[pid];
-      ps_elem_ids(pid) = new_elem;
-    }
-  };
-  ps::parallel_for(ptcls, lamb);
+  // PS::kkLidView ps_elem_ids("ps_elem_ids", ps_capacity);
+  // auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+  //   if (mask) {
+  //     int new_elem = elem_ids[pid];
+  //     ps_elem_ids(pid) = new_elem;
+  //   }
+  // };
+  // ps::parallel_for(ptcls, lamb);
 
   pumipic::migrate_lb_ptcls(picparts, ptcls, elem_ids, 1.05);
   pumipic::printPtclImb(ptcls);
@@ -458,8 +461,11 @@ void search(p::Mesh& picparts, PS* ptcls, bool output) {
   auto pid = ptcls->get<2>();
   o::Write<o::Real> xpoints_d(3 * psCapacity, "intersection points");
   o::Write<o::LO> xface_id(psCapacity, "intersection faces");
-  bool isFound = p::search_mesh<Particle>(*mesh, ptcls, x, xtgt, pid, elem_ids,
-                                          xpoints_d, xface_id, maxLoops);
+  // all sides are considered zone boundaries
+  o::Read<o::I8> zone_boundary_sides(mesh->nfaces(), 1);
+  bool isFound = p::search_mesh_with_zone<Particle>(
+      *mesh, ptcls, x, xtgt, pid, elem_ids, xpoints_d, xface_id,
+      zone_boundary_sides, maxLoops);
   fprintf(stderr, "search_mesh (seconds) %f\n", timer.seconds());
   assert(isFound);
   // rebuild the PS to set the new element-to-particle lists
