@@ -1,5 +1,6 @@
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Core_fwd.hpp>
+#include <Omega_h_array.hpp>
 #include <Omega_h_bbox.hpp>
 #include <Omega_h_mesh.hpp>
 #include <fstream>
@@ -98,6 +99,11 @@ void search(p::Mesh& picparts, PS* ptcls, bool output);
 void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop);
 
 /**
+* Create owner list based on the cpn file
+*/
+inline void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners);
+
+/**
  * Pseudo Monte Carlo simulation to simulate particle transport
  * The following steps will be performed:
  * 1. Initial source sampling
@@ -144,27 +150,12 @@ int main(int argc, char* argv[]) {
                "and "
             << full_mesh.nverts() << " vertices\n";
 
-  // ******************* Mesh Partitioning ******************* //
-  // ? Does the owner file has mapping for each element to a rank?
-  Omega_h::HostWrite<Omega_h::LO> host_owners(full_mesh.nelems());
-  if (comm_size > 1) {
-    std::ifstream in_str(partition_file);
-    if (!in_str) {
-      if (!comm_rank)
-        std::cerr << "Error: could not open partition file " << partition_file
-                  << '\n';
-      return EXIT_FAILURE;
-    }
-    int own;
-    int index = 0;
-    while (in_str >> own) host_owners[index++] = own;
-  } else {
-    for (int i = 0; i < full_mesh.nelems(); ++i) host_owners[i] = 0;
-  }
-  Omega_h::Write<Omega_h::LO> owner(host_owners);
-
+  // ******************* Partition Loading ******************* //
+  o::Write<o::LO> owners = o::Write<o::LO>(full_mesh.nelems(), 0);
+  ownerFromCPN(partition_file, owners);
+  
   // *********** Create Picparts with the full mesh
-  p::Mesh picparts(full_mesh, owner);  // Constucts PIC parts with a core and
+  p::Mesh picparts(full_mesh, owners);  // Constucts PIC parts with a core and
                                        // the entire mesh as buffer/safe
   o::Mesh* mesh = picparts.mesh();
 
@@ -496,4 +487,21 @@ void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop) {
 
   o::LOs ehp_nm0_r(ehp_nm0);
   mesh->set_tag(o::REGION, "has_particles", ehp_nm0_r);
+}
+
+inline void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners) {
+  std::ifstream cpn_file(cpn_file_name);
+  if (!cpn_file.is_open()) {
+    std::cerr << "Error: cannot open the cpn file\n";
+    exit(1);
+  }
+  int own;
+  int index = -1;
+  while (cpn_file >> own) owners[index++] = own;
+
+  if (index != owners.size()) {
+    std::cout << "******************* Warning *******************\n"
+                 "The number of elements in the cpn file does not match the "
+                 "number of elements in the mesh\n";
+  }
 }
