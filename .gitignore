@@ -1,4 +1,8 @@
 build/
+*.osh
+*.msh
+*.vtk
+*.vtu
 .cache/
 pumipush.cpp
 pumipush-test.cpp
