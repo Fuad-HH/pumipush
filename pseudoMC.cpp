@@ -1,7 +1,11 @@
+#include <Omega_h_macros.h>
+
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Core_fwd.hpp>
 #include <Omega_h_array.hpp>
 #include <Omega_h_bbox.hpp>
+#include <Omega_h_file.hpp>
+#include <Omega_h_for.hpp>
 #include <Omega_h_mesh.hpp>
 #include <fstream>
 #include <particle_structs.hpp>
@@ -99,9 +103,10 @@ void search(p::Mesh& picparts, PS* ptcls, bool output);
 void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop);
 
 /**
-* Create owner list based on the cpn file
-*/
-inline void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners);
+ * Create owner list based on the cpn file
+ */
+inline void ownerFromCPN(const std::string cpn_file_name,
+                         o::Write<o::LO>& owners);
 
 /**
  * Pseudo Monte Carlo simulation to simulate particle transport
@@ -145,19 +150,37 @@ int main(int argc, char* argv[]) {
   o::Mesh full_mesh = readMesh(mesh_file_name, lib);
   o::reorder_by_hilbert(&full_mesh);
   if (comm_rank == 0) std::cout << "Mesh Hilbert reordered\n";
-  std::cout << "Mesh loaded sucessfully with " << full_mesh.nelems()
-            << " elements\n\t\t\t"
-               "and "
-            << full_mesh.nverts() << " vertices\n";
+  if (comm_rank == 0) {
+    std::cout << "Mesh loaded sucessfully with " << full_mesh.nelems()
+              << " elements\n\t\t\t"
+                 "and "
+              << full_mesh.nverts() << " vertices\n";
+  }
 
   // ******************* Partition Loading ******************* //
   o::Write<o::LO> owners = o::Write<o::LO>(full_mesh.nelems(), 0);
-  ownerFromCPN(partition_file, owners);
-  
+  // ownerFromCPN(partition_file, owners);
+
   // *********** Create Picparts with the full mesh
-  p::Mesh picparts(full_mesh, owners);  // Constucts PIC parts with a core and
-                                       // the entire mesh as buffer/safe
+  // p::Mesh picparts(full_mesh, owners);  // Constucts PIC parts with a core
+  // and
+  // the entire mesh as buffer/safe
+  // o::Mesh* mesh = picparts.mesh();
+
+  // **************** Create picparts with classification info ****************
+  // // read the class_id from the mesh
+  o::LOs class_ids = full_mesh.get_array<o::LO>(full_mesh.dim(), "class_id");
+  // if (comm_rank == 0) std::cout << "Class ids size " << class_ids.size() <<
+  // '\n';
+  //  * class ids start from 1, so we need to subtract 1 to make it 0-based
+  Omega_h::parallel_for(
+      class_ids.size(),
+      OMEGA_H_LAMBDA(o::LO i) { owners[i] = class_ids[i] - 1; });
+  p::Mesh picparts(full_mesh, owners);
+
   o::Mesh* mesh = picparts.mesh();
+
+  Omega_h::vtk::write_parallel("initialPartion.vtk", mesh, picparts.dim());
 
   // ******************* Particle Initialization ******************* //
   if (comm_rank != 0) num_particles = 0;
@@ -252,11 +275,12 @@ int main(int argc, char* argv[]) {
 // ******************** Function Definitions ******************** //
 
 inline double random_path_length(double lambda) {
-  // ref: https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
+  // ref:
+  // https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> dis(0, 1);
-  double l = - std::log(dis(gen)) * lambda;
+  double l = -std::log(dis(gen)) * lambda;
   return l;
 }
 
@@ -271,7 +295,7 @@ o::Mesh readMesh(std::string meshFile, o::Library& lib) {
 
   auto ext = fn.substr(fn.find_last_of(".") + 1);
   if (ext == "osh") {
-    std::cout << "Reading omegah mesh " << meshFile << "\n";
+    // std::cout << "Reading omegah mesh " << meshFile << "\n";
     return Omega_h::binary::read(meshFile, lib.self());
   } else {
     std::cout
@@ -374,16 +398,17 @@ void push(PS* ptcls, int np, double lambda) {
 }
 
 inline std::vector<double> getDirection(const double A) {
-  // ref https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
+  // ref
+  // https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
   // ref
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> dis(0, 1);
   double mu = 2 * dis(gen) - 1;
   // cosine in the particles incident direction
-  double mu_lab = (1 + A*mu) / std::sqrt(1 + 2*A*mu + A*A);
+  double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
   // cosine with the plane of the collision
-  double nu_lab = 2 * dis (gen) - 1;
+  double nu_lab = 2 * dis(gen) - 1;
   std::vector<double> dir(3);
 
   // TODO: replace this dummy direction with the actual direction
@@ -489,7 +514,8 @@ void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop) {
   mesh->set_tag(o::REGION, "has_particles", ehp_nm0_r);
 }
 
-inline void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners) {
+inline void ownerFromCPN(const std::string cpn_file_name,
+                         o::Write<o::LO>& owners) {
   std::ifstream cpn_file(cpn_file_name);
   if (!cpn_file.is_open()) {
     std::cerr << "Error: cannot open the cpn file\n";
