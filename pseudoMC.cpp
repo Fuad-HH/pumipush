@@ -36,7 +36,7 @@ typedef Kokkos::DefaultExecutionSpace ExeSpace;
  * @brief Generate a random path length using an exponential distribution
  * TODO: make this lambda a mean free path length
  */
-double random_path_length(double lambda);
+inline double random_path_length(double lambda);
 
 o::Mesh readMesh(std::string meshFile, o::Library& lib);
 
@@ -74,7 +74,7 @@ void push(PS* ptcls, int np, double lambda);
 /**
  * Get a random direction uniformly distributed on the unit sphere
  */
-std::vector<double> getDirection();
+inline std::vector<double> getDirection(const double A = 1.0);
 
 /**
  * Update the particle positions to the new target positions
@@ -260,11 +260,13 @@ int main(int argc, char* argv[]) {
 
 // ******************** Function Definitions ******************** //
 
-double random_path_length(double lambda) {
+inline double random_path_length(double lambda) {
+  // ref: https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
   std::random_device rd;
   std::mt19937 gen(rd());
-  std::exponential_distribution<> d(lambda);
-  return d(gen);
+  std::uniform_real_distribution<> dis(0, 1);
+  double l = - std::log(dis(gen)) * lambda;
+  return l;
 }
 
 o::Mesh readMesh(std::string meshFile, o::Library& lib) {
@@ -380,20 +382,24 @@ void push(PS* ptcls, int np, double lambda) {
   printTiming("ps push", totTime);
 }
 
-std::vector<double> getDirection() {
+inline std::vector<double> getDirection(const double A) {
+  // ref https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
+  // ref
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> dis(0, 1);
+  double mu = 2 * dis(gen) - 1;
+  // cosine in the particles incident direction
+  double mu_lab = (1 + A*mu) / std::sqrt(1 + 2*A*mu + A*A);
+  // cosine with the plane of the collision
+  double nu_lab = 2 * dis (gen) - 1;
   std::vector<double> dir(3);
-  double x = dis(gen);
-  double y = dis(gen);
 
-  double theta = 2.0 * M_PI * x;
-  double phi = acos(2.0 * y - 1.0);
-
-  dir[0] = sin(phi) * cos(theta);
-  dir[1] = sin(phi) * sin(theta);
-  dir[2] = cos(phi);
+  // TODO: replace this dummy direction with the actual direction
+  // actual direction needs the incident direction
+  dir[0] = std::sqrt(1 - mu_lab * mu_lab) * std::cos(2 * M_PI * nu_lab);
+  dir[1] = std::sqrt(1 - mu_lab * mu_lab) * std::sin(2 * M_PI * nu_lab);
+  dir[2] = mu_lab;
   return dir;
 }
 
