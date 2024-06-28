@@ -7,3 +7,7 @@ build/
 pumipush.cpp
 pumipush-test.cpp
 compile_commands.json
+meshes/*x_t
+meshes/*.smd
+meshes/*.sms
+meshes/likeTokamaks.geo

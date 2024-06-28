@@ -12,6 +12,8 @@
 #include <pumipic_kktypes.hpp>
 #include <random>
 
+#include "redev.h"
+
 #include "pumipic_adjacency.hpp"
 #include "pumipic_mesh.hpp"
 #include "pumipic_ptcl_ops.hpp"
@@ -176,7 +178,7 @@ int main(int argc, char* argv[]) {
   Omega_h::parallel_for(
       class_ids.size(),
       OMEGA_H_LAMBDA(o::LO i) { owners[i] = class_ids[i] - 1; });
-  p::Mesh picparts(full_mesh, owners);
+  p::Mesh picparts(full_mesh, owners, 5, 3);
 
   o::Mesh* mesh = picparts.mesh();
 
