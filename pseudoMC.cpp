@@ -7,12 +7,14 @@
 #include <Omega_h_file.hpp>
 #include <Omega_h_for.hpp>
 #include <Omega_h_mesh.hpp>
+#include <cmath>
 #include <fstream>
 #include <particle_structs.hpp>
 #include <pumipic_kktypes.hpp>
 #include <random>
+//#include <redev_partition.h>
 
-#include "redev.h"
+//#include "redev.h"
 
 #include "pumipic_adjacency.hpp"
 #include "pumipic_mesh.hpp"
@@ -39,6 +41,9 @@ typedef ps::ParticleStructure<Particle> PS;
 typedef Kokkos::DefaultExecutionSpace ExeSpace;
 
 // ******************** Function Prototypes ******************** //
+OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
+                                             o::Few<o::LO, 4> v);
+
 /**
  * @brief Generate a random path length using an exponential distribution
  * TODO: make this lambda a mean free path length
@@ -111,6 +116,49 @@ inline void ownerFromCPN(const std::string cpn_file_name,
                          o::Write<o::LO>& owners);
 
 /**
+* @brief partition mesh equally based on the number of ranks
+ */
+ void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size, int comm_rank){
+  Omega_h::BBox<3> bb = Omega_h::find_bounding_box<3>(mesh.coords());
+  // create a vector of 0 comm_size-1
+  std::vector<int> ranks(comm_size);
+  std::iota(ranks.begin(), ranks.end(), 0);
+  // create a vector of cut surfaces for recursive coordinate bisection
+  double startx = bb.min[0]; double starty = bb.min[1];
+  double deltax = bb.max[0] - bb.min[0]; double deltay = bb.max[1] - bb.min[1];
+  int ncuts_x = std::sqrt(comm_size); 
+  // decrement ncuts_x until it divides comm_size
+  while (comm_size % ncuts_x != 0) {
+    ncuts_x--;
+  }
+  
+  int ncuts_y = comm_size/ncuts_x;
+
+  // print the number of cuts in x and y
+  std::cout << "Number of cuts in x and y: " << ncuts_x << " " << ncuts_y << '\n';
+
+  double dx = deltax/ncuts_x; double dy = deltay/ncuts_y;
+
+  auto cells2nodes = mesh.ask_down(o::REGION, o::VERT).ab2b;
+  auto nodes2coords = mesh.coords();
+  auto lamb = OMEGA_H_LAMBDA(o::LO i){
+      auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(i));
+      auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
+      auto center = average(cell_nodes2coords);
+      //std::array<double, 3> center_arr = {center[0], center[1], center[2]};
+      std::array<double, 2> center2d {center[0], center[1]};
+      // assert that the center is within the bounding box
+      assert(center[0] >= startx && center[0] <= bb.max[0]);
+      assert(center[1] >= starty && center[1] <= bb.max[1]);
+      // get rank based on the location of the center starting from the lower-left corner and moving up and right
+      int rank = int((center[0] - startx)/dx) + ncuts_x*int((center[1] - starty)/dy);
+      assert((rank < comm_size) && (rank >= 0));
+      owners[i] = rank;
+    };
+  o::parallel_for(mesh.nelems(), lamb);
+ }
+
+/**
  * Pseudo Monte Carlo simulation to simulate particle transport
  * The following steps will be performed:
  * 1. Initial source sampling
@@ -159,8 +207,45 @@ int main(int argc, char* argv[]) {
               << full_mesh.nverts() << " vertices\n";
   }
 
+  // ******** Mesh bounding box ******** //
+  //Omega_h::BBox<3> bb = Omega_h::find_bounding_box<3>(full_mesh.coords());
+
   // ******************* Partition Loading ******************* //
   o::Write<o::LO> owners = o::Write<o::LO>(full_mesh.nelems(), 0);
+  /*
+  // create a vector of 0 comm_size-1
+  std::vector<int> ranks(comm_size);
+  std::iota(ranks.begin(), ranks.end(), 0);
+  // create a vector of cut surfaces for recursive coordinate bisection
+  std::vector<double> cuts; cuts.resize(comm_size);
+  double startx = bb.min[0]; double starty = bb.min[1];
+  double deltax = bb.max[0] - bb.min[0]; double deltay = bb.max[1] - bb.min[1];
+  int ncuts_x = std::sqrt(comm_size); int ncuts_y = comm_size/ncuts_x;
+  double dx = deltax/ncuts_x; double dy = deltay/ncuts_y;
+
+  //cuts={0, bb.min[0]+(bb.max[0] - bb.min[0])/2.0, bb.min[1]+(bb.max[1] - bb.min[1])/2.0, bb.min[1]+(bb.max[1] - bb.min[1])/2.0};
+  std::cout << "cuts: " << cuts[0] << " " << cuts[1] << " " << cuts[2] << " " << cuts[3] << '\n';
+  // the bounding box
+  std::cout << "bb: min " << bb.min[0] << " " << bb.min[1] << " " << bb.min[2] << " & max" << bb.max[0] << " " << bb.max[1] << " " << bb.max[2] << '\n';
+  auto rcb_ptn = redev::RCBPtn(2, ranks, cuts);
+  
+
+  auto cells2nodes = full_mesh.ask_down(o::REGION, o::VERT).ab2b;
+  auto nodes2coords = full_mesh.coords();
+  auto lamb = OMEGA_H_LAMBDA(o::LO i){
+      auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(i));
+      auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
+      auto center = average(cell_nodes2coords);
+      std::array<double, 3> center_arr = {center[0], center[1], center[2]};
+      std::array<double, 2> center2d {center[0], center[1]};
+      owners[i] = rcb_ptn.GetRank(center_arr);
+    };
+  o::parallel_for(full_mesh.nelems(), lamb);
+  */
+  partitionMeshEqually(full_mesh, owners, comm_size, comm_rank);
+
+
+
   // ownerFromCPN(partition_file, owners);
 
   // *********** Create Picparts with the full mesh
@@ -171,14 +256,15 @@ int main(int argc, char* argv[]) {
 
   // **************** Create picparts with classification info ****************
   // // read the class_id from the mesh
-  o::LOs class_ids = full_mesh.get_array<o::LO>(full_mesh.dim(), "class_id");
+  //o::LOs class_ids = full_mesh.get_array<o::LO>(full_mesh.dim(), "class_id");
   // if (comm_rank == 0) std::cout << "Class ids size " << class_ids.size() <<
   // '\n';
   //  * class ids start from 1, so we need to subtract 1 to make it 0-based
-  Omega_h::parallel_for(
-      class_ids.size(),
-      OMEGA_H_LAMBDA(o::LO i) { owners[i] = class_ids[i] - 1; });
-  p::Mesh picparts(full_mesh, owners, 5, 3);
+  //Omega_h::parallel_for(
+  //    class_ids.size(),
+  //    OMEGA_H_LAMBDA(o::LO i) { owners[i] = class_ids[i] - 1; });
+    std::cout << "Partitioned the mesh successfully\n";
+  p::Mesh picparts(full_mesh, owners, 3, 2);
 
   o::Mesh* mesh = picparts.mesh();
 

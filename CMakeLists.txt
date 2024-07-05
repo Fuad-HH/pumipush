@@ -13,6 +13,7 @@ find_package(MPI REQUIRED)
 
 add_executable(pumipush pumipush.cpp)
 add_executable(pseudoMC pseudoMC.cpp)
-target_link_libraries(pseudoMC PUBLIC pumipic::pumipic Omega_h::omega_h redev::redev MPI::MPI_CXX)
+#target_link_libraries(pseudoMC PUBLIC pumipic::pumipic Omega_h::omega_h redev::redev MPI::MPI_CXX)
+target_link_libraries(pseudoMC PUBLIC pumipic::pumipic Omega_h::omega_h MPI::MPI_CXX)
 target_link_libraries(pumipush PUBLIC pumipic::pumipic)
 target_link_libraries(pumipush PUBLIC Omega_h::omega_h)
