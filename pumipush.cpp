@@ -37,9 +37,7 @@ int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
   auto numPpe = numPtcls / ne;
   auto numPpeR = numPtcls % ne;
   o::parallel_for(
-      ne, OMEGA_H_LAMBDA(const int i) {
-        ppe[i] = numPpe + (i < numPpeR);
-      });
+      ne, OMEGA_H_LAMBDA(const int i) { ppe[i] = numPpe + (i < numPpeR); });
   Omega_h::LO totPtcls = 0;
   Kokkos::parallel_reduce(
       ppe.size(),
@@ -237,60 +235,68 @@ void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop) {
   mesh->set_tag(o::REGION, "has_particles", ehp_nm0_r);
 }
 
-inline void ownerFromCPN(const std::string cpn_file_name,
-                         o::Write<o::LO>& owners) {
+void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners) {
   std::ifstream cpn_file(cpn_file_name);
   if (!cpn_file.is_open()) {
     std::cerr << "Error: cannot open the cpn file\n";
     exit(1);
   }
   int own;
-  int index = -1;
-  while (cpn_file >> own) owners[index++] = own;
+  int index = 0;
+  while (cpn_file >> own) {
+    owners[index++] = own;
+  }
 
-  if (index != owners.size()) {
+  if (index - 1 != owners.size()) {
     std::cout << "******************* Warning *******************\n"
                  "The number of elements in the cpn file does not match the "
                  "number of elements in the mesh\n";
   }
 }
 
- void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size, int comm_rank){
+void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
+                          int comm_rank) {
   Omega_h::BBox<3> bb = Omega_h::find_bounding_box<3>(mesh.coords());
   // create a vector of 0 comm_size-1
   std::vector<int> ranks(comm_size);
   std::iota(ranks.begin(), ranks.end(), 0);
   // create a vector of cut surfaces for recursive coordinate bisection
-  double startx = bb.min[0]; double starty = bb.min[1];
-  double deltax = bb.max[0] - bb.min[0]; double deltay = bb.max[1] - bb.min[1];
-  int ncuts_x = std::sqrt(comm_size); 
+  double startx = bb.min[0];
+  double starty = bb.min[1];
+  double deltax = bb.max[0] - bb.min[0];
+  double deltay = bb.max[1] - bb.min[1];
+  int ncuts_x = std::sqrt(comm_size);
   // decrement ncuts_x until it divides comm_size
   while (comm_size % ncuts_x != 0) {
     ncuts_x--;
   }
-  
-  int ncuts_y = comm_size/ncuts_x;
+
+  int ncuts_y = comm_size / ncuts_x;
 
   // print the number of cuts in x and y
-  std::cout << "Number of cuts in x and y: " << ncuts_x << " " << ncuts_y << '\n';
+  std::cout << "Number of cuts in x and y: " << ncuts_x << " " << ncuts_y
+            << '\n';
 
-  double dx = deltax/ncuts_x; double dy = deltay/ncuts_y;
+  double dx = deltax / ncuts_x;
+  double dy = deltay / ncuts_y;
 
   auto cells2nodes = mesh.ask_down(o::REGION, o::VERT).ab2b;
   auto nodes2coords = mesh.coords();
-  auto lamb = OMEGA_H_LAMBDA(o::LO i){
-      auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(i));
-      auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
-      auto center = average(cell_nodes2coords);
-      //std::array<double, 3> center_arr = {center[0], center[1], center[2]};
-      std::array<double, 2> center2d {center[0], center[1]};
-      // assert that the center is within the bounding box
-      assert(center[0] >= startx && center[0] <= bb.max[0]);
-      assert(center[1] >= starty && center[1] <= bb.max[1]);
-      // get rank based on the location of the center starting from the lower-left corner and moving up and right
-      int rank = int((center[0] - startx)/dx) + ncuts_x*int((center[1] - starty)/dy);
-      assert((rank < comm_size) && (rank >= 0));
-      owners[i] = rank;
-    };
+  auto lamb = OMEGA_H_LAMBDA(o::LO i) {
+    auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(i));
+    auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
+    auto center = average(cell_nodes2coords);
+    // std::array<double, 3> center_arr = {center[0], center[1], center[2]};
+    std::array<double, 2> center2d{center[0], center[1]};
+    // assert that the center is within the bounding box
+    assert(center[0] >= startx && center[0] <= bb.max[0]);
+    assert(center[1] >= starty && center[1] <= bb.max[1]);
+    // get rank based on the location of the center starting from the lower-left
+    // corner and moving up and right
+    int rank = int((center[0] - startx) / dx) +
+               ncuts_x * int((center[1] - starty) / dy);
+    assert((rank < comm_size) && (rank >= 0));
+    owners[i] = rank;
+  };
   o::parallel_for(mesh.nelems(), lamb);
- }
+}

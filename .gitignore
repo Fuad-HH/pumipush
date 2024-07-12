@@ -4,7 +4,6 @@ build/
 *.vtk
 *.vtu
 .cache/
-pumipush-test.cpp
 compile_commands.json
 meshes/*x_t
 meshes/*.smd

@@ -15,9 +15,9 @@
 #include <particle_structs.hpp>
 #include <pumipic_kktypes.hpp>
 #include <random>
-//#include <redev_partition.h>
+// #include <redev_partition.h>
 
-//#include "redev.h"
+// #include "redev.h"
 
 #include "pumipic_adjacency.hpp"
 #include "pumipic_mesh.hpp"
@@ -115,12 +115,12 @@ void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop);
 /**
  * Create owner list based on the cpn file
  */
-inline void ownerFromCPN(const std::string cpn_file_name,
-                         o::Write<o::LO>& owners);
+void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners);
 
 /**
-* @brief partition mesh equally based on the number of ranks
+ * @brief partition mesh equally based on the number of ranks
  */
- void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size, int comm_rank);
+void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
+                          int comm_rank);
 
- #endif
+#endif

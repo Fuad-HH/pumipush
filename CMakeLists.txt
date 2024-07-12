@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(pumipush LANGUAGES CXX)
+enable_testing()
 
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 # set the pumipic root directory
@@ -19,3 +20,12 @@ target_link_libraries(pseudoMC PUBLIC pumipic::pumipic Omega_h::omega_h MPI::MPI
 target_link_libraries(pseudo3D PUBLIC pumipic::pumipic Omega_h::omega_h MPI::MPI_CXX)
 #target_link_libraries(pumipush PUBLIC pumipic::pumipic)
 #target_link_libraries(pumipush PUBLIC Omega_h::omega_h)
+
+add_executable(pumipush-test pumipush-test.cpp pumipush.cpp)
+target_link_libraries(pumipush-test PRIVATE pumipic::pumipic Omega_h::omega_h MPI::MPI_CXX)
+
+add_test(
+    NAME pumipush-test 
+    COMMAND pumipush-test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
