@@ -84,6 +84,8 @@ void printTiming(const char* name, double t);
 /**
  * Push the particles in the direction of the vector
  */
+void pseudo2Dpush(PS* ptcls, double lambda);
+
 void push(PS* ptcls, int np, double lambda);
 
 /**
@@ -122,5 +124,30 @@ void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners);
  */
 void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
                           int comm_rank);
+
+/**
+ * \brief this function is used to get partitions of mesh only in the xy plane
+ */
+void get_bounding_box_in_xy_plane(Omega_h::Mesh& mesh,
+                                  std::array<double, 2>& min,
+                                  std::array<double, 2>& max);
+
+void create_int_rectangle(const int total, int& nrows, int& ncols);
+
+void varify_balance_of_partitions(o::Write<o::LO>& owners, int comm_size);
+
+void prettyPrintBB(std::array<double, 2> min, std::array<double, 2> max);
+
+void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
+                      const o::Reals& nodes2coords, o::Few<o::Real, 2>& center);
+
+void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
+                      const o::Reals& nodes2coords, o::Few<o::Real, 3>& center);
+
+OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
+                                          o::Vector<3>& cartesian);
+
+OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3> cartesian,
+                                          o::Vector<3>& cyl);
 
 #endif

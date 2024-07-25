@@ -1,5 +1,6 @@
-#include "pumipush.h"
 #include <iostream>
+
+#include "pumipush.h"
 
 /**
  * Pseudo Monte Carlo simulation to simulate particle transport
@@ -41,8 +42,8 @@ int main(int argc, char* argv[]) {
 
   // ******************* Mesh Loading ******************* //
   o::Mesh full_mesh = readMesh(mesh_file_name, lib);
-  o::reorder_by_hilbert(&full_mesh);
-  if (comm_rank == 0) std::cout << "Mesh Hilbert reordered\n";
+  // o::reorder_by_hilbert(&full_mesh);
+  // if (comm_rank == 0) std::cout << "Mesh Hilbert reordered\n";
   if (comm_rank == 0) {
     std::cout << "Mesh loaded sucessfully with " << full_mesh.nelems()
               << " elements\n\t\t\t"
@@ -51,27 +52,34 @@ int main(int argc, char* argv[]) {
   }
 
   // ******** Mesh bounding box ******** //
-  //Omega_h::BBox<3> bb = Omega_h::find_bounding_box<3>(full_mesh.coords());
+  // Omega_h::BBox<3> bb = Omega_h::find_bounding_box<3>(full_mesh.coords());
 
   // ******************* Partition Loading ******************* //
   o::Write<o::LO> owners = o::Write<o::LO>(full_mesh.nelems(), 0);
 
   partitionMeshEqually(full_mesh, owners, comm_size, comm_rank);
+#ifdef DEBUG
+  printf("INFO: Owners list of the mesh created successfully\n");
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
 
-  std::cout << "Partitioned the mesh successfully\n";
   p::Mesh picparts(full_mesh, owners, 3, 2);
+  printf("Partitioned the mesh successfully\n");
 
   o::Mesh* mesh = picparts.mesh();
 
-  Omega_h::vtk::write_parallel("initialPartion.vtk", mesh, picparts.dim());
+  /// Omega_h::vtk::write_parallel("initialPartition.vtk", mesh, 2);
+  // std::cout << "Initial partition written to initialPartition.vtk\n";
 
   // ******************* Particle Initialization ******************* //
-  if (comm_rank != 0) num_particles = 0;
   Omega_h::Int ne = mesh->nelems();
-  if (comm_rank == 0) {
-    std::cout << "Number of particles: \t" << num_particles << '\n';
-    std::cout << "Number of elements: \t" << ne << '\n';
-  }
+
+#ifdef DEBUG
+  MPI_Barrier(MPI_COMM_WORLD);
+  // printf("Number of particles: \t%d in rank \t%d\n", num_particles,
+  // comm_rank);
+  printf("INFO: Number of elements: \t%d in rank %d\n", ne, comm_rank);
+#endif
 
   PS::kkLidView ptcls_per_elem("ptcls_per_elem", ne);
   PS::kkGidView element_gids("element_gids", ne);
@@ -82,22 +90,38 @@ int main(int argc, char* argv[]) {
 
   // int numPtcls = setSourceElements(picparts, ptcls_per_elem, 0,
   // num_particles);
+  int total_num_particles = num_particles;
+  // if (comm_rank != 0) num_particles = 0;
+  {
+    double element_fraction = double(ne) / full_mesh.nelems();
+    num_particles = int(num_particles * element_fraction);
+  }
   int setPtcls =
       distributeParticlesEqually(picparts, ptcls_per_elem, num_particles);
-  if (comm_rank == 0) {
-    std::cout << "Number of particles set to elements: \t" << setPtcls << '\n';
-  }
+  printf("INFO: Number of particles set to elements: \t %d in rank %d\n",
+         setPtcls, comm_rank);
 
   Kokkos::TeamPolicy<ExeSpace> policy =
       Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, Kokkos::AUTO());
   // Sell-C-Sigma particle structure: see the pumipic paper for more details
   PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 10, ne, setPtcls,
                                        ptcls_per_elem, element_gids);
+#ifdef DEBUG
+  printf("INFO: Particle structure created successfully in rank %d\n",
+         comm_rank);
+#endif
+
   setInitialPtclCoords(picparts, ptcls);
+#ifdef DEBUG
+  printf("INFO: Initial positions of particles set... in rank %d\n", comm_rank);
+#endif
   setPtclIds(ptcls);
+#ifdef DEBUG
+  printf("INFO: Particles initialized with ids... in rank %d\n", comm_rank);
+#endif
 
   o::LOs elmTags(ne, -1, "elmTagVals");
-  mesh->add_tag(o::REGION, "has_particles", 1,
+  mesh->add_tag(o::FACE, "has_particles", 1,
                 elmTags);  // ncomp is number of components
   mesh->add_tag(o::VERT, "avg_density", 1, o::Reals(mesh->nverts(), 0));
   render(picparts, 0, comm_rank);
@@ -111,9 +135,13 @@ int main(int argc, char* argv[]) {
 
   // ******************* Monte Carlo Transport Simulation ******************* //
   for (iter = 0; iter < num_iterations; ++iter) {
-    if (comm_rank == 0) std::cout << "Iteration: " << iter << '\n';
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (comm_rank == 0) printf("-----------------------------\n");
+    printf("Iteration: %d Rank: %d\n", iter, comm_rank);
     // 1. check the remaining number of particles
     ps_np = ptcls->nPtcls();
+    std::cout << "Number of particles: " << ps_np << " in rank " << comm_rank
+              << '\n';
     MPI_Allreduce(&ps_np, &np, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if (np == 0) {
       fprintf(stderr, "No particles remain... exiting push loop\n");
@@ -121,10 +149,11 @@ int main(int argc, char* argv[]) {
     }
     timer.reset();
     // 2. push particles
-    push(ptcls, np, lambda);
+    pseudo2Dpush(ptcls, lambda);
     MPI_Barrier(MPI_COMM_WORLD);
     if (comm_rank == 0)
-      fprintf(stderr, "push and transfer (seconds) %f\n", timer.seconds());
+      fprintf(stderr, "TIME: push and transfer (seconds) %f\n",
+              timer.seconds());
     timer.reset();
     // 3. search for the new element
     search(picparts, ptcls, false);
