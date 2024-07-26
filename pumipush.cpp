@@ -10,6 +10,7 @@
 #include <Omega_h_bbox.hpp>
 #include <Omega_h_matrix.hpp>
 #include <Omega_h_mesh.hpp>
+#include <Omega_h_shape.hpp>
 #include <Omega_h_vector.hpp>
 #include <cstdlib>
 #include <particle_structure.hpp>
@@ -128,7 +129,7 @@ void setPtclIds(PS* ptcls) {
 
 void render(p::Mesh& picparts, int iter, int comm_rank) {
   std::stringstream ss;
-  ss << "pseudoMC_t" << iter << "_r" << comm_rank;
+  ss << "pseudoMC_t" << iter << "_r" << comm_rank << ".vtk";
   std::string s = ss.str();
   Omega_h::vtk::write_parallel(s, picparts.mesh(), picparts.dim());
 }
@@ -375,14 +376,9 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         }
         {  // check if the particle is in the element
           // find barrycentric coordinates of the
-          // fill abc with 0 as the y coordinate
-          Omega_h::Few<Omega_h::Vector<3>, 3> abc;
-          for (int i = 0; i < 3; ++i) {
-            abc[i] = {tri_verts[i][0], 0.0,
-                      tri_verts[i][1]};  // same as tri_verts but with 0 y
-          }
-
-          find_barycentric_triangle(abc, start, bcc);
+          // find_barycentric_triangle(abc, start, bcc);
+          bcc =
+              o::barycentric_from_global<2, 2>({start[0], start[2]}, tri_verts);
           if (!all_positive(bcc, tol)) {
             // printf("Starting Position of pid %d in el %d : %f %f %f\n", pid,
             // elmId, start[0], start[1], start[2]);
@@ -391,11 +387,13 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
             // abc[0][1], abc[0][2]); printf("Start elm vertex %d: %f %f
             // %f\n",tri2verts[1], abc[1][0], abc[1][1], abc[1][2]);
             // printf("Start elm vertex %d: %f %f %f\n",tri2verts[2], abc[2][0],
-            // abc[2][1], abc[2][2]); printf("Error: Particle not in this "
-            //        "element"
-            //        "\tpid %d elem %d\n",
-            //        pid, elmId);
-            // printf("bcc %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+            // abc[2][1], abc[2][2]);
+            printf(
+                "Error: Particle not in this "
+                "element"
+                "\tpid %d elem %d\n",
+                pid, elmId);
+            printf("bcc %f %f %f\n", bcc[0], bcc[1], bcc[2]);
             OMEGA_H_CHECK(false);
           }
         }
@@ -499,12 +497,8 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
               adj_tri_verts[j] =
                   Omega_h::get_vector<2>(coords, adj_tri2verts[j]);
             }
-            Omega_h::Vector<3> bcc;
-            Omega_h::Few<Omega_h::Vector<3>, 3> abc;
-            for (int j = 0; j < 3; ++j) {
-              abc[j] = {adj_tri_verts[j][0], 0.0, adj_tri_verts[j][1]};
-            }
-            find_barycentric_triangle(abc, new_position, bcc);
+            o::Vector<3> bcc = o::barycentric_from_global<2, 2>(
+                {new_position[0], new_position[2]}, adj_tri_verts);
             if (all_positive(bcc, tol)) {
               elem_ids_next[pid] = adj_face;
               found_next_face = true;
@@ -544,32 +538,6 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           ptcl_done[pid] = 1;
         }
       }
-// *check if the final position is inside the next element or not
-#ifdef ddDEBUG  // now turned off
-      // check if the particle is inside the element
-      auto nexttri2verts = o::gather_verts<3>(faces2nodes, elem_ids_next[pid]);
-      Omega_h::Few<Omega_h::Vector<2>, 3> next_tri_verts;
-      for (int i = 0; i < 3; ++i) {
-        next_tri_verts[i] = Omega_h::get_vector<2>(coords, nexttri2verts[i]);
-      }
-      Omega_h::Vector<3> bcc;
-      Omega_h::Few<Omega_h::Vector<3>, 3> abc;
-      for (int i = 0; i < 3; ++i) {
-        abc[i] = {next_tri_verts[i][0], 0.0, next_tri_verts[i][1]};
-      }
-      Omega_h::Vector<3> new_position = {xtgt(pid, 0), 0.0, xtgt(pid, 2)};
-      find_barycentric_triangle(abc, new_position, bcc);
-
-      if (!all_positive(bcc, tol)) {
-        printf(
-            "Error: Particle next position not in this "
-            "element at loops=0"
-            "\tpid %d elem %d\n",
-            pid, elem_ids_next[pid]);
-        printf("bcc %f %f %f\n", bcc[0], bcc[1], bcc[2]);
-        OMEGA_H_CHECK(false);
-      }
-#endif
     };
     parallel_for(ptcls, lamb, "adj_search");
     found = true;
