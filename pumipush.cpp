@@ -342,28 +342,18 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         auto elmId = elem_ids[pid];
         OMEGA_H_CHECK(elmId >= 0);
         // get the corners of the element
-        auto tri2verts = o::gather_verts<3>(faces2nodes, e);
-        o::Vector<3> dest = {xtgt(pid, 0), 0.0, xtgt(pid, 2)};
-        o::Vector<3> start = {x(pid, 0), 0.0, x(pid, 2)};
+        o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
+        o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
         o::Vector<3> bcc;
-        Omega_h::Few<Omega_h::Vector<2>, 3> tri_verts;
-        for (int i = 0; i < 3; ++i) {
-          tri_verts[i] = Omega_h::get_vector<2>(coords, tri2verts[i]);
-        }
+        auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
+        Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords;
+        current_el_vert_coords =
+            o::gather_vectors<3, 2>(coords, current_el_verts);
+
         {  // check if the particle is in the element
-          // find barrycentric coordinates of the
-          // find_barycentric_triangle(abc, start, bcc);
-          bcc =
-              o::barycentric_from_global<2, 2>({start[0], start[2]}, tri_verts);
+          bcc = o::barycentric_from_global<2, 2>(
+              {origin_rThz[0], origin_rThz[2]}, current_el_vert_coords);
           if (!all_positive(bcc, tol)) {
-            // printf("Starting Position of pid %d in el %d : %f %f %f\n", pid,
-            // elmId, start[0], start[1], start[2]);
-            //// print abc
-            // printf("Start elm vertex %d: %f %f %f\n",tri2verts[0], abc[0][0],
-            // abc[0][1], abc[0][2]); printf("Start elm vertex %d: %f %f
-            // %f\n",tri2verts[1], abc[1][0], abc[1][1], abc[1][2]);
-            // printf("Start elm vertex %d: %f %f %f\n",tri2verts[2], abc[2][0],
-            // abc[2][1], abc[2][2]);
             printf(
                 "Error: Particle not in this "
                 "element"
@@ -376,14 +366,14 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         // find the intersection point
         double intersection_distance = -1.0;
         int edge_id = -1;
-        Omega_h::Vector<2> start_2d = {start[0], start[2]};
-        Omega_h::Vector<2> dest_2d = {dest[0], dest[2]};
+        Omega_h::Vector<2> origin_rz = {origin_rThz[0], origin_rThz[2]};
+        Omega_h::Vector<2> dest_rz = {dest_rThz[0], dest_rThz[2]};
         for (int i = 0; i < 3; i++) {
           int j = (i + 1) % 3;
-          double dist = find_intersection_distance_tri(
-              start_2d, dest_2d, tri_verts[i], tri_verts[j]);
-          if (dist >= 0) {
-            intersection_distance = dist;
+          intersection_distance = find_intersection_distance_tri(
+              origin_rz, dest_rz, current_el_vert_coords[i],
+              current_el_vert_coords[j]);
+          if (intersection_distance > 0) {
             /// printf("! Intersected: Intersection distance %f\n",
             /// intersection_distance);
             edge_id = i;
@@ -391,60 +381,61 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           }
         }
         // get intersetion edge
-        if (intersection_distance > 0) {
+        if (intersection_distance > 0 &&
+            edge_id != -1) {  // update the xtgt to the new position
           // printf("Intersection distance %f\n", intersection_distance);
-          //  move the particle to the next element
+
           intersection_distance += tol;  // to move inside the next element
           // update the xtgt to the new position
-          o::Vector<3> new_position_cyl = {xtgt(pid, 0), xtgt(pid, 1),
-                                           xtgt(pid, 2)};
-          auto new_position_cyl_cp =
-              new_position_cyl;  // todo remove this after testing
-          o::Vector<3> new_position_cart;
-          cylindrical2cartesian(new_position_cyl, new_position_cart);
+          o::Vector<3> new_position_cyl_cp = {xtgt(pid, 0), xtgt(pid, 1),
+                                              xtgt(pid, 2)};
+          o::Vector<3> dest_xyz;
+          cylindrical2cartesian(dest_rThz, dest_xyz);
           // move the particle to the new position
-          o::Vector<3> orig_position_cyl = {x(pid, 0), x(pid, 1), x(pid, 2)};
+          // o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
           // it's the new position but with the same theta
-          o::Vector<3> new_position_cyl_cotheta = {
-              new_position_cyl[0], orig_position_cyl[1], new_position_cyl[2]};
-          o::Vector<3> new_position_cart_cotheta;
-          o::Vector<3> orig_position_cart;
-          cylindrical2cartesian(orig_position_cyl, orig_position_cart);
-          cylindrical2cartesian(new_position_cyl_cotheta,
-                                new_position_cart_cotheta);
-          auto direction = (new_position_cart - orig_position_cart) /
-                           o::norm(new_position_cart - orig_position_cart);
+          o::Vector<3> dest_rThz_Th_plane = {dest_rThz[0], origin_rThz[1],
+                                             dest_rThz[2]};
+          o::Vector<3> dest_xyz_Th_plane;
+          o::Vector<3> origin_xyz;
+          cylindrical2cartesian(origin_rThz, origin_xyz);
+          cylindrical2cartesian(dest_rThz_Th_plane, dest_xyz_Th_plane);
+          auto direction_xyz =
+              (dest_xyz - origin_xyz) / o::norm(dest_xyz - origin_xyz);
+#ifdef DEBUG
           // assert that the direction is unit vector
-          OMEGA_H_CHECK(std::abs(o::norm(direction) - 1.0) <
+          OMEGA_H_CHECK(std::abs(o::norm(direction_xyz) - 1.0) <
                         1.0e-10);  // todo remove this check and the next
-          auto rz_plane_direction =
-              (new_position_cart_cotheta - orig_position_cart) /
-              o::norm(new_position_cart_cotheta - orig_position_cart);
-          // assert that the rz_plane_direction is unit vector
-          OMEGA_H_CHECK(std::abs(o::norm(rz_plane_direction) - 1.0) < 1.0e-10);
-          double dot_product = o::inner_product(direction, rz_plane_direction);
-          double intersection_distance_3d = intersection_distance / dot_product;
+#endif
+          auto direction_Th_plane = (dest_xyz_Th_plane - origin_xyz) /
+                                    o::norm(dest_xyz_Th_plane - origin_xyz);
+#ifdef DEBUG
+          OMEGA_H_CHECK(std::abs(o::norm(direction_Th_plane) - 1.0) < 1.0e-10);
+#endif
+          double dot_product =
+              o::inner_product(direction_xyz, direction_Th_plane);
+          double intersection_distance_xyz =
+              intersection_distance / dot_product;
           // OMEGA_H_CHECK(intersection_distance_3d > 0); // ? can it be
           // negative OMEGA_H_CHECK(intersection_distance_3d >=
           // intersection_distance); // ? can it be less than the intersection
           // distance
-          new_position_cart =
-              orig_position_cart + (direction * intersection_distance_3d);
-          cartesian2cylindrical(new_position_cart, new_position_cyl);
+          dest_xyz = origin_xyz + (direction_xyz * intersection_distance_xyz);
+          cartesian2cylindrical(dest_xyz, dest_rThz);
           // check if the projection is correct
           // print the new position
-          auto cyl_direction = (new_position_cyl_cp - orig_position_cyl) /
-                               o::norm(new_position_cyl_cp - orig_position_cyl);
+          auto cyl_direction = (new_position_cyl_cp - origin_rThz) /
+                               o::norm(new_position_cyl_cp - origin_rThz);
           double temp_R =
-              orig_position_cyl[0] + (intersection_distance * cyl_direction[0]);
+              origin_rThz[0] + (intersection_distance * cyl_direction[0]);
           double temp_Z =
-              orig_position_cyl[2] + (intersection_distance * cyl_direction[2]);
+              origin_rThz[2] + (intersection_distance * cyl_direction[2]);
           // printf("New position of pid %d, el %d:             %f %f %f\n",
           // pid,e, new_position_cyl[0], new_position_cyl[1],
           // new_position_cyl[2]); printf("New position of pid %d, el %d in RZ
           // plane: %f        %f\n", pid, e, temp_R, temp_Z);
-          if (std::abs(temp_R - new_position_cyl[0]) > 1.0e-4 ||
-              std::abs(temp_Z - new_position_cyl[2]) > 1.0e-5) {
+          if (std::abs(temp_R - dest_rThz[0]) > 1.0e-4 ||
+              std::abs(temp_Z - dest_rThz[2]) > 1.0e-4) {
             // printf("Error: The new position is not correct: diff = %f %f \n",
             // std::abs(temp_R - new_position_cyl[0]), std::abs(temp_Z -
             // new_position_cyl[2]));
@@ -453,11 +444,10 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           // OMEGA_H_CHECK(std::abs(temp_R - new_position_cyl[0])<10e-4);
           // OMEGA_H_CHECK(std::abs(temp_Z  - new_position_cyl[2])<10e-4);
 
-          xtgt(pid, 0) = new_position_cyl[0];
-          xtgt(pid, 1) = new_position_cyl[1];
-          xtgt(pid, 2) = new_position_cyl[2];
-          Omega_h::Vector<3> new_position = {new_position_cyl[0], 0.0,
-                                             new_position_cyl[2]};
+          xtgt(pid, 0) = dest_rThz[0];
+          xtgt(pid, 1) = dest_rThz[1];
+          xtgt(pid, 2) = dest_rThz[2];
+          dest_rz = {dest_rThz[0], dest_rThz[2]};
           // get the next element: loop throught the adjaecnt faces current face
           // and check the bcc of the new position
           int n_adj_faces = face2faceOffsets[e + 1] - face2faceOffsets[e];
@@ -467,14 +457,15 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           bool found_next_face = false;
           for (int i = 0; i < n_adj_faces; i++) {
             int adj_face = face2faceFace[face2faceOffsets[e] + i];
-            auto adj_tri2verts = o::gather_verts<3>(faces2nodes, adj_face);
-            Omega_h::Few<Omega_h::Vector<2>, 3> adj_tri_verts;
-            for (int j = 0; j < 3; ++j) {
-              adj_tri_verts[j] =
-                  Omega_h::get_vector<2>(coords, adj_tri2verts[j]);
-            }
-            o::Vector<3> bcc = o::barycentric_from_global<2, 2>(
-                {new_position[0], new_position[2]}, adj_tri_verts);
+            auto adj_face_verts = o::gather_verts<3>(faces2nodes, adj_face);
+            Omega_h::Few<Omega_h::Vector<2>, 3> adj_face_vert_coords =
+                o::gather_vectors<3, 2>(coords, adj_face_verts);
+            // for (int j = 0; j < 3; ++j) {
+            //   adj_face_vert_coords[j] =
+            //       Omega_h::get_vector<2>(coords, adj_face_verts[j]);
+            // }
+            o::Vector<3> bcc =
+                o::barycentric_from_global<2, 2>(dest_rz, adj_face_vert_coords);
             if (all_positive(bcc, tol)) {
               elem_ids_next[pid] = adj_face;
               found_next_face = true;
@@ -735,17 +726,17 @@ void prettyPrintBB(T min, T max) {
   printf("(%8.4f, %8.4f)\t---------------------|\n", min[0], min[1]);
 }
 
-void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
-                      const o::Reals& nodes2coords,
-                      o::Few<o::Real, 3>& center) {
+OMEGA_H_DEVICE void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
+                                     const o::Reals& nodes2coords,
+                                     o::Few<o::Real, 3>& center) {
   auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(e));
   auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
   center = average(cell_nodes2coords);
 }
 
-void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
-                      const o::Reals& nodes2coords,
-                      o::Few<o::Real, 2>& center) {
+OMEGA_H_DEVICE void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
+                                     const o::Reals& nodes2coords,
+                                     o::Few<o::Real, 2>& center) {
   auto cell_nodes2nodes = o::gather_verts<3>(cells2nodes, o::LO(e));
   auto cell_nodes2coords =
       o::gather_vectors<3, 2>(nodes2coords, cell_nodes2nodes);

@@ -138,11 +138,13 @@ void varify_balance_of_partitions(o::Write<o::LO>& owners, int comm_size);
 template <typename T>
 void prettyPrintBB(T min, T max);
 
-void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
-                      const o::Reals& nodes2coords, o::Few<o::Real, 2>& center);
+OMEGA_H_DEVICE void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
+                                     const o::Reals& nodes2coords,
+                                     o::Few<o::Real, 2>& center);
 
-void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
-                      const o::Reals& nodes2coords, o::Few<o::Real, 3>& center);
+OMEGA_H_DEVICE void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
+                                     const o::Reals& nodes2coords,
+                                     o::Few<o::Real, 3>& center);
 
 OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
                                           o::Vector<3>& cartesian);
