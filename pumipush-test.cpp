@@ -14,9 +14,8 @@
 bool is_close(double a, double b, double tol = 1e-5) {
   return std::abs(a - b) < tol;
 }
-bool match_with_expected(std::array<double, 2> min, std::array<double, 2> max,
-                         std::array<double, 2> expected_min,
-                         std::array<double, 2> expected_max);
+template <typename T>
+bool match_with_expected(T min, T max, T expected_min, T expected_max);
 void varify7k3d(o::Library* lib);
 void verifyCorseWestcase(o::Library* lib);
 void checkCPNFileReading(o::Library* lib);
@@ -34,21 +33,21 @@ int main(int argc, char** argv) {
 }
 
 void varify7k3d(o::Library* lib) {
-  std::array<double, 2> min, max;
+  o::Vector<2> min, max;
   Omega_h::Mesh mesh7kcube(lib);
   Omega_h::binary::read("assets/7k.osh", lib->world(), &mesh7kcube);
   std::cout << "Mesh loaded successfully with " << mesh7kcube.nelems()
             << " elements\n\t\t\t"
             << "and " << mesh7kcube.nverts() << " vertices\n";
   get_bounding_box_in_xy_plane(mesh7kcube, min, max);
-  std::array<double, 2> expected_min_7k = {-0.5, -0.5};
-  std::array<double, 2> expected_max_7k = {65, 65};
+  o::Vector<2> expected_min_7k = {-0.5, -0.5};
+  o::Vector<2> expected_max_7k = {65, 65};
   OMEGA_H_CHECK(
       match_with_expected(min, max, expected_min_7k, expected_max_7k));
 }
 
 void verifyCorseWestcase(o::Library* lib) {
-  std::array<double, 2> min, max;
+  o::Vector<2> min, max;
   Omega_h::Mesh meshwestcoarse(lib);
   Omega_h::binary::read("assets/coarseWestLCPP.osh", lib->world(),
                         &meshwestcoarse);
@@ -57,8 +56,8 @@ void verifyCorseWestcase(o::Library* lib) {
             << "and " << meshwestcoarse.nverts() << " vertices"
             << "dim = " << meshwestcoarse.dim() << "\n";
   get_bounding_box_in_xy_plane(meshwestcoarse, min, max);
-  std::array<double, 2> expected_min_west = {1.83431, -0.94};
-  std::array<double, 2> expected_max_west = {3.19847, 0.7986};
+  o::Vector<2> expected_min_west = {1.83431, -0.94};
+  o::Vector<2> expected_max_west = {3.19847, 0.7986};
   OMEGA_H_CHECK(
       match_with_expected(min, max, expected_min_west, expected_max_west));
 }
@@ -76,7 +75,7 @@ void checkCPNFileReading(o::Library* lib) {
 }
 
 void check2dBox(o::Library* lib) {
-  std::array<double, 2> min, max;
+  o::Vector<2> min, max;
   // 2d case
   Omega_h::Mesh mesh2d(lib);
   Omega_h::binary::read("assets/2d_box.osh", lib->world(), &mesh2d);
@@ -84,15 +83,14 @@ void check2dBox(o::Library* lib) {
             << " elements\n\t\t\t"
             << "and " << mesh2d.nverts() << " vertices\n";
   get_bounding_box_in_xy_plane(mesh2d, min, max);
-  std::array<double, 2> expected_min_2d = {0, 0};
-  std::array<double, 2> expected_max_2d = {1, 0.8};
+  o::Vector<2> expected_min_2d = {0, 0};
+  o::Vector<2> expected_max_2d = {1, 0.8};
   OMEGA_H_CHECK(
       match_with_expected(min, max, expected_min_2d, expected_max_2d));
 }
 
-bool match_with_expected(std::array<double, 2> min, std::array<double, 2> max,
-                         std::array<double, 2> expected_min,
-                         std::array<double, 2> expected_max) {
+template <typename T>
+bool match_with_expected(T min, T max, T expected_min, T expected_max) {
   if (!is_close(min[0], expected_min[0]) ||
       !is_close(min[1], expected_min[1]) ||
       !is_close(max[0], expected_max[0]) ||

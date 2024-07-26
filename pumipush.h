@@ -91,7 +91,7 @@ void push(PS* ptcls, int np, double lambda);
 /**
  * Get a random direction uniformly distributed on the unit sphere
  */
-inline std::vector<double> getDirection(const double A = 1.0);
+inline o::Vector<3> sampleRandomDirection(const double A = 1.0);
 
 /**
  * Update the particle positions to the new target positions
@@ -128,15 +128,15 @@ void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
 /**
  * \brief this function is used to get partitions of mesh only in the xy plane
  */
-void get_bounding_box_in_xy_plane(Omega_h::Mesh& mesh,
-                                  std::array<double, 2>& min,
-                                  std::array<double, 2>& max);
+void get_bounding_box_in_xy_plane(Omega_h::Mesh& mesh, o::Vector<2>& min,
+                                  o::Vector<2>& max);
 
 void create_int_rectangle(const int total, int& nrows, int& ncols);
 
 void varify_balance_of_partitions(o::Write<o::LO>& owners, int comm_size);
 
-void prettyPrintBB(std::array<double, 2> min, std::array<double, 2> max);
+template <typename T>
+void prettyPrintBB(T min, T max);
 
 void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
                       const o::Reals& nodes2coords, o::Few<o::Real, 2>& center);

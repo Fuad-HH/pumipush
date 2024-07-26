@@ -153,11 +153,8 @@ void pseudo2Dpush(PS* ptcls, double lambda) {
       o::Vector<3> cart_coords;
       cylindrical2cartesian(cyl_coords, cart_coords);
 
-      std::vector<double> direction_vec = getDirection();
-      o::Vector<3> new_position_cart = {
-          cart_coords[0] + distance * direction_vec[0],
-          cart_coords[1] + distance * direction_vec[1],
-          cart_coords[2] + distance * direction_vec[2]};
+      o::Vector<3> direction_vec = sampleRandomDirection();
+      o::Vector<3> new_position_cart = cart_coords + (distance * direction_vec);
       cartesian2cylindrical(new_position_cart, cyl_coords);
       new_position_d(pid, 0) = cyl_coords[0];
       new_position_d(pid, 1) = cyl_coords[1];
@@ -181,7 +178,7 @@ void push(PS* ptcls, int np, double lambda) {
     if (mask) {
       // fp_t dir[3];
       double distance = random_path_length(lambda);
-      std::vector<double> disp_d = getDirection();
+      o::Vector<3> disp_d = sampleRandomDirection();
       new_position_d(pid, 0) = position_d(pid, 0) + distance * disp_d[0];
       new_position_d(pid, 1) = position_d(pid, 1) + distance * disp_d[1];
       new_position_d(pid, 2) = position_d(pid, 2) + distance * disp_d[2];
@@ -193,7 +190,7 @@ void push(PS* ptcls, int np, double lambda) {
   printTiming("ps push", totTime);
 }
 
-inline std::vector<double> getDirection(const double A) {
+inline o::Vector<3> sampleRandomDirection(const double A) {
   // ref
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
   // ref
@@ -205,7 +202,7 @@ inline std::vector<double> getDirection(const double A) {
   double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
   // cosine with the plane of the collision
   double nu_lab = 2 * dis(gen) - 1;
-  std::vector<double> dir(3);
+  o::Vector<3> dir;
 
   // TODO: replace this dummy direction with the actual direction
   // actual direction needs the incident direction
@@ -275,27 +272,6 @@ OMEGA_H_DEVICE bool all_positive(const Vec a, Omega_h::Real tol = EPSILON) {
     isPos = isPos && gtez;
   }
   return isPos;
-}
-OMEGA_H_DEVICE bool find_barycentric_triangle(
-    const Omega_h::Few<Omega_h::Vector<3>, 3>& abc,
-    const Omega_h::Vector<3>& xpoint, Omega_h::Vector<3>& bc) {
-  auto a = abc[0];
-  auto b = abc[1];
-  auto c = abc[2];
-  auto cross = 1 / 2.0 * Omega_h::cross(b - a, c - a);  // NOTE order
-  auto norm = Omega_h::normalize(cross);
-  Omega_h::Real area = o::inner_product(norm, cross);
-
-  if (Kokkos::abs(area) < 1e-20) {  // TODO
-    printf("area is too small \n");
-    return 0;
-  }
-  Omega_h::Real fac = 1 / (area * 2.0);
-  bc[0] = fac * o::inner_product(norm, Omega_h::cross(b - a, xpoint - a));
-  bc[1] = fac * o::inner_product(norm, Omega_h::cross(c - b, xpoint - b));
-  bc[2] = fac * o::inner_product(norm, Omega_h::cross(xpoint - a, c - a));
-
-  return 1;
 }
 
 OMEGA_H_DEVICE bool counter_clockwise(const Omega_h::Vector<2>& a,
@@ -623,8 +599,8 @@ void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners) {
 void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
                           int comm_rank) {
   int dim = mesh.dim();
-  std::array<double, 2> min;
-  std::array<double, 2> max;
+  o::Vector<2> min;
+  o::Vector<2> max;
   get_bounding_box_in_xy_plane(mesh, min, max);
   // create a vector of 0 comm_size-1
   std::vector<int> ranks(comm_size);
@@ -698,22 +674,17 @@ void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
   }
 }
 
-void get_bounding_box_in_xy_plane(Omega_h::Mesh& mesh,
-                                  std::array<double, 2>& min,
-                                  std::array<double, 2>& max) {
+void get_bounding_box_in_xy_plane(Omega_h::Mesh& mesh, o::Vector<2>& min,
+                                  o::Vector<2>& max) {
   int dim = mesh.dim();
   if (dim == 2) {
     Omega_h::BBox<2> bb = Omega_h::get_bounding_box<2>(&mesh);
-    min[0] = bb.min[0];
-    min[1] = bb.min[1];
-    max[0] = bb.max[0];
-    max[1] = bb.max[1];
+    min = bb.min;
+    max = bb.max;
   } else if (dim == 3) {
     Omega_h::BBox<3> bb = Omega_h::get_bounding_box<3>(&mesh);
-    min[0] = bb.min[0];
-    min[1] = bb.min[1];
-    max[0] = bb.max[0];
-    max[1] = bb.max[1];
+    min = {bb.min[0], bb.min[1]};
+    max = {bb.max[0], bb.max[1]};
   } else {
     std::cerr << "Error: unsupported dimension\n";
     exit(1);
@@ -752,7 +723,8 @@ void varify_balance_of_partitions(o::Write<o::LO>& owners, int comm_size) {
   }
 }
 
-void prettyPrintBB(std::array<double, 2> min, std::array<double, 2> max) {
+template <typename T>
+void prettyPrintBB(T min, T max) {
   printf("\nBounding box: \n");
   printf("\t\t\t----------------------(%8.4f, %8.4f)\n", max[0], max[1]);
   printf("\t\t\t|                    |\n");
