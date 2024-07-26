@@ -13,6 +13,7 @@
 #include <Omega_h_shape.hpp>
 #include <Omega_h_vector.hpp>
 #include <cstdlib>
+#include <optional>
 #include <particle_structure.hpp>
 #include <pumipic_kktypes.hpp>
 
@@ -279,19 +280,49 @@ OMEGA_H_DEVICE bool counter_clockwise(const Omega_h::Vector<2>& a,
                                       const Omega_h::Vector<2>& c) {
   return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
 }
+
+OMEGA_H_DEVICE std::optional<o::Vector<2>> find_intersection_point(
+    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2) {
+  auto b = line2[0] - line1[0];
+  o::Matrix<2, 2> A;
+  A[0] = line1[1] - line1[0];
+  A[1] = line2[0] - line2[1];
+  // A = o::transpose(A);
+  //  print the matrix
+  // printf("Matrix A: \n");
+  // for (int i = 0; i < 2; i++){
+  //   for (int j = 0; j < 2; j++){
+  //     printf("%f ", A[i][j]);
+  //   }
+  //   printf("\n");
+  // }
+  auto det = o::determinant(A);
+  if (std::abs(det) < 10e-10) {
+    return {};
+  }
+  o::Vector<2> x = o::invert(A) * b;
+  if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
+    return {};
+  }
+  o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
+  return intersection_point;
+}
+
+OMEGA_H_DEVICE double distance_between_points(o::Vector<2> p1,
+                                              o::Vector<2> p2) {
+  return o::norm(p1 - p2);
+}
+
 /// ref: https://bryceboe.com/2006/10/23/line-segment-intersection-algorithm/
 OMEGA_H_DEVICE double find_intersection_distance_tri(
-    const Omega_h::Vector<2>& a, const Omega_h::Vector<2>& b,
-    const Omega_h::Vector<2>& c, const Omega_h::Vector<2>& d) {
-  bool intersects = counter_clockwise(a, c, d) != counter_clockwise(b, c, d) &&
-                    counter_clockwise(a, b, c) != counter_clockwise(a, b, d);
-
-  // get the intersection distance from the start point a
-  Omega_h::Vector<2> u = b - a;
-  Omega_h::Vector<2> v = d - c;
-  Omega_h::Vector<2> w = a - c;
-  double s = (v[0] * w[1] - v[1] * w[0]) / (v[1] * u[0] - v[0] * u[1]);
-  return intersects ? s : -1;
+    const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
+    const o::Few<o::Vector<2>, 2>& tri_edge) {
+  // test_intersection();
+  if (auto intersection_point = find_intersection_point(start_dest, tri_edge)) {
+    return distance_between_points(start_dest[0], intersection_point.value());
+  } else {
+    return -1.0;
+  }
 }
 
 bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
@@ -303,7 +334,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                          o::Read<o::I8> zone_boundary_sides,
                          int looplimit = 10) {
   OMEGA_H_CHECK(mesh.dim() == 2);  // only for pseudo3D now
-  o::Real tol = 1.0e-12;
+  o::Real tol = 1.0e-10;
   const auto side_is_exposed = o::mark_exposed_sides(&mesh);
   const auto coords = mesh.coords();
   const auto faces2nodes = mesh.ask_verts_of(o::FACE);
@@ -353,7 +384,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         {  // check if the particle is in the element
           bcc = o::barycentric_from_global<2, 2>(
               {origin_rThz[0], origin_rThz[2]}, current_el_vert_coords);
-          if (!all_positive(bcc, tol)) {
+          if (!all_positive(bcc)) {
             printf(
                 "Error: Particle not in this "
                 "element"
@@ -363,7 +394,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
             OMEGA_H_CHECK(false);
           }
         }
-        // find the intersection point
+        // find the intersection distance
         double intersection_distance = -1.0;
         int edge_id = -1;
         Omega_h::Vector<2> origin_rz = {origin_rThz[0], origin_rThz[2]};
@@ -371,8 +402,8 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         for (int i = 0; i < 3; i++) {
           int j = (i + 1) % 3;
           intersection_distance = find_intersection_distance_tri(
-              origin_rz, dest_rz, current_el_vert_coords[i],
-              current_el_vert_coords[j]);
+              {origin_rz, dest_rz},
+              {current_el_vert_coords[i], current_el_vert_coords[j]});
           if (intersection_distance > 0) {
             /// printf("! Intersected: Intersection distance %f\n",
             /// intersection_distance);
@@ -483,12 +514,35 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
             }
           }
 
-          if (!found_next_face && n_adj_faces == 3) {  // todo now make it lost
-            // printf("Error: Particle next position not in the neighbour faces
-            // of "
-            //         "element %d, pid %d\n", e, pid);
-            elem_ids_next[pid] = -1;
-            // OMEGA_H_CHECK(false);
+          if (!found_next_face && n_adj_faces >= 3) {  // todo now make it lost
+            // printf("*");
+            for (int node = 0; node < 3; node++) {
+              int cur_vert = current_el_verts[node];
+              int n_node_adj_face =
+                  node2faceOffsets[cur_vert + 1] - node2faceOffsets[cur_vert];
+              for (int i = 0; i < n_node_adj_face; i++) {
+                auto node_adj_face =
+                    node2faceFace[node2faceOffsets[cur_vert] + i];
+                auto face_verts =
+                    o::gather_verts<3>(faces2nodes, node_adj_face);
+                auto face_vert_coords =
+                    o::gather_vectors<3, 2>(coords, face_verts);
+                o::Vector<3> bcc =
+                    o::barycentric_from_global<2, 2>(dest_rz, face_vert_coords);
+                if (all_positive(bcc, tol)) {
+                  elem_ids_next[pid] = node_adj_face;
+                  found_next_face = true;
+                  break;
+                }
+              }
+            }
+            if (!found_next_face) {
+              elem_ids_next[pid] = -1;
+              // printf(".");
+            }
+            // elem_ids_next[pid] = -1;
+            // printf(".");
+            //  OMEGA_H_CHECK(false);
           }
           // if not found and number of adj_faces is less than 3, that means the
           // partice moved out of the boundary

@@ -21,8 +21,10 @@ void verifyCorseWestcase(o::Library* lib);
 void checkCPNFileReading(o::Library* lib);
 void check2dBox(o::Library* lib);
 void check_cyl2cart();
+void test_intersection();
 
 int main(int argc, char** argv) {
+  test_intersection();
   auto lib = o::Library(&argc, &argv);
   OMEGA_H_CHECK(std::string(lib.version()) == OMEGA_H_SEMVER);
   varify7k3d(&lib);
@@ -153,4 +155,82 @@ void cart2cyl() {
   OMEGA_H_CHECK(is_close(cyl[0], 2));
   OMEGA_H_CHECK(is_close(cyl[1], -o::PI / 2));
   OMEGA_H_CHECK(is_close(cyl[2], 5));
+}
+std::optional<o::Vector<2>> find_intersection_point(
+    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2) {
+  auto b = line2[0] - line1[0];
+  o::Matrix<2, 2> A;
+  A[0] = line1[1] - line1[0];
+  A[1] = line2[0] - line2[1];
+  // A = o::transpose(A);
+  //  print the matrix
+  // printf("Matrix A: \n");
+  // for (int i = 0; i < 2; i++){
+  //   for (int j = 0; j < 2; j++){
+  //     printf("%f ", A[i][j]);
+  //   }
+  //   printf("\n");
+  // }
+  auto det = o::determinant(A);
+  if (std::abs(det) < 10e-10) {
+    return {};
+  }
+  o::Vector<2> x = o::invert(A) * b;
+  if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
+    return {};
+  }
+  o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
+  return intersection_point;
+}
+
+double distance_between_points(o::Vector<2> p1, o::Vector<2> p2) {
+  return o::norm(p1 - p2);
+}
+
+/// ref: https://bryceboe.com/2006/10/23/line-segment-intersection-algorithm/
+double find_intersection_distance_tri(
+    const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
+    const o::Few<o::Vector<2>, 2>& tri_edge) {
+  // test_intersection();
+  if (auto intersection_point = find_intersection_point(start_dest, tri_edge)) {
+    return distance_between_points(start_dest[0], intersection_point.value());
+  } else {
+    return -1.0;
+  }
+}
+void test_intersection() {
+  o::Few<o::Vector<2>, 2> line1 = {{-1, 0.5}, {1, 0.5}};
+  o::Few<o::Vector<2>, 2> line2 = {{0, 1}, {0, 2}};
+  auto intersection_point = find_intersection_point(line1, line2);
+  OMEGA_H_CHECK(!intersection_point.has_value());
+  double dist = distance_between_points(line1[0], line1[1]);
+  OMEGA_H_CHECK(is_close(dist, 2.0));
+  dist = distance_between_points(line2[0], line2[1]);
+  OMEGA_H_CHECK(is_close(dist, 1.0));
+
+  line1 = {{1.8, 2.1}, {0.8, 1.1}};
+  line2 = {{1, 1.25}, {0, 1.25}};
+
+  dist = distance_between_points(line1[0], line1[1]);
+  OMEGA_H_CHECK(is_close(dist, std::sqrt(2.0)));
+  dist = distance_between_points(line2[0], line2[1]);
+  OMEGA_H_CHECK(is_close(dist, 1.0));
+
+  intersection_point = find_intersection_point(line1, line2);
+  o::Vector<2> expected_intersection_point = {0.95, 1.25};
+  OMEGA_H_CHECK(intersection_point.has_value());
+  // print the intersection point
+  // printf("Intersection point: %f %f\n", intersection_point.value()[0],
+  // intersection_point.value()[1]);
+  OMEGA_H_CHECK(o::are_close(intersection_point.value(),
+                             expected_intersection_point, 1.0e-10));
+  printf("Intersection point: %f %f\n", intersection_point.value()[0],
+         intersection_point.value()[1]);
+  double distance = find_intersection_distance_tri(line1, line2);
+  dist = distance_between_points(line1[0], intersection_point.value());
+  printf("Distance - direct: %f\n", distance);
+
+  printf("Distance: %f\n", distance);
+  OMEGA_H_CHECK(std::abs(distance - dist) < 1.0e-6);
+  OMEGA_H_CHECK(std::abs(distance - 1.202082) < 1.0e-6);
 }

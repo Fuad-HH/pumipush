@@ -152,4 +152,11 @@ OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
 OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3> cartesian,
                                           o::Vector<3>& cyl);
 
+OMEGA_H_DEVICE double find_intersection_distance_tri(
+    const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
+    const o::Few<o::Vector<2>, 2>& tri_edge);
+
+OMEGA_H_DEVICE std::optional<o::Vector<2>> find_intersection_point(
+    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2);
+
 #endif
