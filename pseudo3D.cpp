@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
   int ps_np;
 
   // ******************* Monte Carlo Transport Simulation ******************* //
-  for (iter = 0; iter < num_iterations; ++iter) {
+  for (iter = 1; iter <= num_iterations; ++iter) {
     MPI_Barrier(MPI_COMM_WORLD);
     if (comm_rank == 0) printf("-----------------------------\n");
     printf("Iteration: %d Rank: %d\n", iter, comm_rank);

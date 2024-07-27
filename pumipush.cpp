@@ -17,12 +17,15 @@
 #include <particle_structure.hpp>
 #include <pumipic_kktypes.hpp>
 
+std::random_device rd;
+auto seed = 0;
+std::mt19937 gen(seed);
+std::uniform_real_distribution<> dis(0, 1);
+
 inline double random_path_length(double lambda) {
   // ref:
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<> dis(0, 1);
+
   double l = -std::log(dis(gen)) * lambda;
   return l;
 }
@@ -195,9 +198,9 @@ inline o::Vector<3> sampleRandomDirection(const double A) {
   // ref
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
   // ref
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<> dis(0, 1);
+  // std::random_device rd;
+  // std::mt19937 gen(0);
+  // std::uniform_real_distribution<> dis(0, 1);
   double mu = 2 * dis(gen) - 1;
   // cosine in the particles incident direction
   double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
@@ -325,6 +328,29 @@ OMEGA_H_DEVICE double find_intersection_distance_tri(
   }
 }
 
+OMEGA_H_DEVICE void search_through_mesh(const o::Mesh& mesh, o::Vector<3> x) {
+  o::Vector<2> x_rz = {x[0], x[2]};
+  auto coords = mesh.coords();
+  auto n_faces = mesh.nfaces();
+  auto face2nodes = mesh.get_adj(o::FACE, o::VERT).ab2b;
+
+  for (int i = 0; i < n_faces; i++) {
+    auto face_nodes = o::gather_verts<3>(face2nodes, i);
+    Omega_h::Few<Omega_h::Vector<2>, 3> face_coords;
+    face_coords = o::gather_vectors<3, 2>(coords, face_nodes);
+    auto bcc = o::barycentric_from_global<2, 2>(x_rz, face_coords);
+    if (all_positive(bcc)) {
+      printf("Found the particle in element: %d\n", i);
+      printf("Barycentric coordinates: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+      printf("Coordinates of the face: \n");
+      for (int j = 0; j < 3; j++) {
+        printf("%.16f %.16f\n", face_coords[j][0], face_coords[j][1]);
+      }
+      printf("Position of the particle was: %.16f %.16f\n", x_rz[0], x_rz[1]);
+    }
+  }
+}
+
 bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                          p::Segment<double[3], Kokkos::HostSpace> x,
                          p::Segment<double[3], Kokkos::HostSpace> xtgt,
@@ -349,12 +375,6 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
   o::Write<o::LO> ptcl_done(psCapacity, 0, "search_done");
   o::Write<o::LO> elem_ids_next(psCapacity);
 
-  // bool set_ids = false;
-  // if (elem_ids.size() == 0) { // ? why this is done
-  //   std::cerr << "Warning!!! elem_ids size is zero\n";
-  //   elem_ids = o::Write<o::LO>(psCapacity, -1);
-  //   set_ids = true;
-  // }
   auto fill = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask > 0) {
       elem_ids[pid] = e;
@@ -374,11 +394,10 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         OMEGA_H_CHECK(elmId >= 0);
         // get the corners of the element
         o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
-        o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
+        const o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
         o::Vector<3> bcc;
-        auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
-        Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords;
-        current_el_vert_coords =
+        const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
+        const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
             o::gather_vectors<3, 2>(coords, current_el_verts);
 
         {  // check if the particle is in the element
@@ -390,10 +409,25 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                 "element"
                 "\tpid %d elem %d\n",
                 pid, elmId);
-            printf("bcc %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+            printf("bcc %.16f %.16f %.16f\n", bcc[0], bcc[1], bcc[2]);
+            printf("Position of the element: %.16f %.16f\n", origin_rThz[0],
+                   origin_rThz[2]);
+            printf("Face vertex ids: %d %d %d\n", current_el_verts[0],
+                   current_el_verts[1], current_el_verts[2]);
+            // grab the location and find out the element
+            search_through_mesh(mesh, origin_rThz);
             OMEGA_H_CHECK(false);
           }
         }
+
+        bool remains_in_el = false;
+        {
+          // check if the destination is in the element
+          bcc = o::barycentric_from_global<2, 2>({dest_rThz[0], dest_rThz[2]},
+                                                 current_el_vert_coords);
+          remains_in_el = all_positive(bcc);
+        }
+
         // find the intersection distance
         double intersection_distance = -1.0;
         int edge_id = -1;
@@ -411,19 +445,28 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
             break;
           }
         }
-        // get intersetion edge
-        if (intersection_distance > 0 &&
-            edge_id != -1) {  // update the xtgt to the new position
+
+        // if the particle remains in the element, and didn't intersect any edge
+        // then it's done
+        if (remains_in_el &&
+            intersection_distance < 0) {  // particle remained in the same
+                                          // element: checked previously
+          // with bcc and intersection distance
+          elem_ids_next[pid] = e;
+          ptcl_done[pid] = 1;
+        }
+
+        // get intersetion edge: if it intersected or didn't remain in the same
+        // element (starts on edge)
+        if ((intersection_distance > 0 && edge_id != -1) ||
+            (intersection_distance < 0 && !remains_in_el)) {
           // printf("Intersection distance %f\n", intersection_distance);
 
           intersection_distance += tol;  // to move inside the next element
-          // update the xtgt to the new position
           o::Vector<3> new_position_cyl_cp = {xtgt(pid, 0), xtgt(pid, 1),
                                               xtgt(pid, 2)};
           o::Vector<3> dest_xyz;
           cylindrical2cartesian(dest_rThz, dest_xyz);
-          // move the particle to the new position
-          // o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
           // it's the new position but with the same theta
           o::Vector<3> dest_rThz_Th_plane = {dest_rThz[0], origin_rThz[1],
                                              dest_rThz[2]};
@@ -466,7 +509,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           // new_position_cyl[2]); printf("New position of pid %d, el %d in RZ
           // plane: %f        %f\n", pid, e, temp_R, temp_Z);
           if (std::abs(temp_R - dest_rThz[0]) > 1.0e-4 ||
-              std::abs(temp_Z - dest_rThz[2]) > 1.0e-4) {
+              std::abs(temp_Z - dest_rThz[2]) > 1.0e-4) {  // todo remove this
             // printf("Error: The new position is not correct: diff = %f %f \n",
             // std::abs(temp_R - new_position_cyl[0]), std::abs(temp_Z -
             // new_position_cyl[2]));
@@ -486,35 +529,21 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           // loop thought the faces and check if the bcc in the new position is
           // all positive
           bool found_next_face = false;
-          for (int i = 0; i < n_adj_faces; i++) {
+          for (int i = 0; i < n_adj_faces; i++) {  // edge adj faces
             int adj_face = face2faceFace[face2faceOffsets[e] + i];
             auto adj_face_verts = o::gather_verts<3>(faces2nodes, adj_face);
             Omega_h::Few<Omega_h::Vector<2>, 3> adj_face_vert_coords =
                 o::gather_vectors<3, 2>(coords, adj_face_verts);
-            // for (int j = 0; j < 3; ++j) {
-            //   adj_face_vert_coords[j] =
-            //       Omega_h::get_vector<2>(coords, adj_face_verts[j]);
-            // }
             o::Vector<3> bcc =
                 o::barycentric_from_global<2, 2>(dest_rz, adj_face_vert_coords);
             if (all_positive(bcc, tol)) {
               elem_ids_next[pid] = adj_face;
               found_next_face = true;
-              // printf("PID %d, Element %d, Next Element %d\n", pid, e,
-              // adj_face);
-              //// print new position
-              // printf("New position of pid %d, el %d: %f %f %f\n", pid, e,
-              // new_position[0], new_position[1], new_position[2]);
-              // printf("Dest elm vertex %d: %f %f %f\n", adj_tri2verts[0],
-              // abc[0][0], abc[0][1], abc[0][2]); printf("Dest elm vertex %d:
-              // %f %f %f\n", adj_tri2verts[1], abc[1][0], abc[1][1],
-              // abc[1][2]); printf("Dest elm vertex %d: %f %f %f\n",
-              // adj_tri2verts[2], abc[2][0], abc[2][1], abc[2][2]);
               break;
             }
           }
 
-          if (!found_next_face && n_adj_faces >= 3) {  // todo now make it lost
+          if (!found_next_face) {  // node adj faces
             // printf("*");
             for (int node = 0; node < 3; node++) {
               int cur_vert = current_el_verts[node];
@@ -530,13 +559,15 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                 o::Vector<3> bcc =
                     o::barycentric_from_global<2, 2>(dest_rz, face_vert_coords);
                 if (all_positive(bcc, tol)) {
+                  // printf("Face Vertices: %d %d %d\n", face_verts[0],
+                  //        face_verts[1], face_verts[2]);
                   elem_ids_next[pid] = node_adj_face;
                   found_next_face = true;
                   break;
                 }
               }
             }
-            if (!found_next_face) {
+            if (!found_next_face) {  // todo handle this case
               elem_ids_next[pid] = -1;
               // printf(".");
             }
@@ -554,11 +585,8 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           // done with the particle
           ptcl_done[pid] = 1;
 
-        } else {  // particle remained in the same element
-          elem_ids_next[pid] = e;
-          ptcl_done[pid] = 1;
-        }
-      }
+        }  // if intersected or not in the same element
+      }  // search each particle
     };
     parallel_for(ptcls, lamb, "adj_search");
     found = true;

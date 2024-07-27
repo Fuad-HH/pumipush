@@ -5,6 +5,7 @@
 #include <Omega_h_fail.hpp>
 #include <Omega_h_file.hpp>
 #include <Omega_h_library.hpp>
+#include <Omega_h_shape.hpp>
 #include <Omega_h_tag.hpp>
 #include <cstdlib>
 #include <iostream>
@@ -33,6 +34,8 @@ int main(int argc, char** argv) {
   check2dBox(&lib);
   check_cyl2cart();
 }
+
+void check_is_inside_tet() {}
 
 void varify7k3d(o::Library* lib) {
   o::Vector<2> min, max;
@@ -233,4 +236,20 @@ void test_intersection() {
   printf("Distance: %f\n", distance);
   OMEGA_H_CHECK(std::abs(distance - dist) < 1.0e-6);
   OMEGA_H_CHECK(std::abs(distance - 1.202082) < 1.0e-6);
+
+  line1 = {{2.562371, 0.110059}, {2.562387, 0.110075}};
+  line2 = {{2.563669, 0.111339}, {2.557894, 0.105644}};
+  distance = find_intersection_distance_tri(line1, line2);
+  printf("Distance: %f\n", distance);
+
+  o::Few<o::Vector<2>, 3> face31_coords = {
+      {2.568239, 0.102393}, {2.563669, 0.111339}, {2.557894, 0.105644}};
+  o::Few<o::Vector<2>, 3> face38_coords = {
+      {2.55291, 0.114357}, {2.563669, 0.111339}, {2.557894, 0.105644}};
+
+  auto bcc =
+      o::barycentric_from_global<2, 2>({2.562387, 0.110075}, face31_coords);
+  printf("Barycentric for 31: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+  bcc = o::barycentric_from_global<2, 2>({2.562387, 0.110075}, face38_coords);
+  printf("Barycentric for 38: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
 }
