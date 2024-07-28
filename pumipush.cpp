@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <optional>
 #include <particle_structure.hpp>
+#include <pumipic_adjacency.tpp>
+#include <pumipic_constants.hpp>
 #include <pumipic_kktypes.hpp>
 
 std::random_device rd;
@@ -300,10 +302,14 @@ OMEGA_H_DEVICE std::optional<o::Vector<2>> find_intersection_point(
   //   printf("\n");
   // }
   auto det = o::determinant(A);
-  if (std::abs(det) < 10e-10) {
+  if (std::abs(det) < EPSILON) {
     return {};
   }
   o::Vector<2> x = o::invert(A) * b;
+  // if intersects near the origin, return the origin
+  if (x[0] > -EPSILON && x[0] < 0) {  // todo not the best way to handle this
+    return line1[0];
+  }
   if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
     return {};
   }
@@ -333,21 +339,25 @@ OMEGA_H_DEVICE void search_through_mesh(const o::Mesh& mesh, o::Vector<3> x) {
   auto coords = mesh.coords();
   auto n_faces = mesh.nfaces();
   auto face2nodes = mesh.get_adj(o::FACE, o::VERT).ab2b;
-
+  bool found = false;
   for (int i = 0; i < n_faces; i++) {
     auto face_nodes = o::gather_verts<3>(face2nodes, i);
     Omega_h::Few<Omega_h::Vector<2>, 3> face_coords;
     face_coords = o::gather_vectors<3, 2>(coords, face_nodes);
     auto bcc = o::barycentric_from_global<2, 2>(x_rz, face_coords);
     if (all_positive(bcc)) {
+      found = true;
       printf("Found the particle in element: %d\n", i);
-      printf("Barycentric coordinates: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+      printf("Barycentric coordinates: %f, %f, %f\n", bcc[0], bcc[1], bcc[2]);
       printf("Coordinates of the face: \n");
       for (int j = 0; j < 3; j++) {
-        printf("%.16f %.16f\n", face_coords[j][0], face_coords[j][1]);
+        printf("%.16f, %.16f\n", face_coords[j][0], face_coords[j][1]);
       }
-      printf("Position of the particle was: %.16f %.16f\n", x_rz[0], x_rz[1]);
+      printf("Position of the particle was: %.16f, %.16f\n", x_rz[0], x_rz[1]);
     }
+  }
+  if (!found) {
+    printf("Particle not found in the mesh\n");
   }
 }
 
@@ -360,7 +370,8 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                          o::Read<o::I8> zone_boundary_sides,
                          int looplimit = 10) {
   OMEGA_H_CHECK(mesh.dim() == 2);  // only for pseudo3D now
-  o::Real tol = 1.0e-10;
+  const auto elemArea = o::measure_elements_real(&mesh);
+  o::Real tol = p::compute_tolerance_from_area(elemArea);
   const auto side_is_exposed = o::mark_exposed_sides(&mesh);
   const auto coords = mesh.coords();
   const auto faces2nodes = mesh.ask_verts_of(o::FACE);
@@ -438,9 +449,11 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           intersection_distance = find_intersection_distance_tri(
               {origin_rz, dest_rz},
               {current_el_vert_coords[i], current_el_vert_coords[j]});
-          if (intersection_distance > 0) {
+          if (intersection_distance >
+              -tol) {  // epsilon to manage origin on the edge
             /// printf("! Intersected: Intersection distance %f\n",
             /// intersection_distance);
+            intersection_distance = tol;  // to move inside the next element
             edge_id = i;
             break;
           }
@@ -456,10 +469,24 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
           ptcl_done[pid] = 1;
         }
 
+        // if the particle didn't remain in the same element and didn't
+        // intersect it's an error
+        if ((!remains_in_el && intersection_distance < 0) ||
+            (remains_in_el && intersection_distance > 0)) {
+          printf(
+              "Error!!!: Particle pid %d didn't remain in the element %d but "
+              "didn't intersect\n",
+              pid, e);
+          printf("Origin     : %.16f, %.16f\n", origin_rThz[0], origin_rThz[2]);
+          printf("Destination: %.16f, %.16f\n", dest_rThz[0], dest_rThz[2]);
+          printf("Intersection distance: %.16f\n", intersection_distance);
+          search_through_mesh(mesh, dest_rThz);
+          OMEGA_H_CHECK(false);
+        }
+
         // get intersetion edge: if it intersected or didn't remain in the same
         // element (starts on edge)
-        if ((intersection_distance > 0 && edge_id != -1) ||
-            (intersection_distance < 0 && !remains_in_el)) {
+        if (intersection_distance > 0 && !remains_in_el) {
           // printf("Intersection distance %f\n", intersection_distance);
 
           intersection_distance += tol;  // to move inside the next element
@@ -490,33 +517,9 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
               o::inner_product(direction_xyz, direction_Th_plane);
           double intersection_distance_xyz =
               intersection_distance / dot_product;
-          // OMEGA_H_CHECK(intersection_distance_3d > 0); // ? can it be
-          // negative OMEGA_H_CHECK(intersection_distance_3d >=
-          // intersection_distance); // ? can it be less than the intersection
-          // distance
+
           dest_xyz = origin_xyz + (direction_xyz * intersection_distance_xyz);
           cartesian2cylindrical(dest_xyz, dest_rThz);
-          // check if the projection is correct
-          // print the new position
-          auto cyl_direction = (new_position_cyl_cp - origin_rThz) /
-                               o::norm(new_position_cyl_cp - origin_rThz);
-          double temp_R =
-              origin_rThz[0] + (intersection_distance * cyl_direction[0]);
-          double temp_Z =
-              origin_rThz[2] + (intersection_distance * cyl_direction[2]);
-          // printf("New position of pid %d, el %d:             %f %f %f\n",
-          // pid,e, new_position_cyl[0], new_position_cyl[1],
-          // new_position_cyl[2]); printf("New position of pid %d, el %d in RZ
-          // plane: %f        %f\n", pid, e, temp_R, temp_Z);
-          if (std::abs(temp_R - dest_rThz[0]) > 1.0e-4 ||
-              std::abs(temp_Z - dest_rThz[2]) > 1.0e-4) {  // todo remove this
-            // printf("Error: The new position is not correct: diff = %f %f \n",
-            // std::abs(temp_R - new_position_cyl[0]), std::abs(temp_Z -
-            // new_position_cyl[2]));
-          }
-
-          // OMEGA_H_CHECK(std::abs(temp_R - new_position_cyl[0])<10e-4);
-          // OMEGA_H_CHECK(std::abs(temp_Z  - new_position_cyl[2])<10e-4);
 
           xtgt(pid, 0) = dest_rThz[0];
           xtgt(pid, 1) = dest_rThz[1];
@@ -567,14 +570,32 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                 }
               }
             }
-            if (!found_next_face) {  // todo handle this case
+            if (!found_next_face && n_adj_faces >= 3) {  // lost from inner face
               elem_ids_next[pid] = -1;
-              // printf(".");
-            }
-            // elem_ids_next[pid] = -1;
-            // printf(".");
-            //  OMEGA_H_CHECK(false);
-          }
+              // find all over the mesh
+              if (intersection_distance > 0) {
+                printf(
+                    "It intersected: distance=%.16f but not found in the "
+                    "adjacent faces\n",
+                    intersection_distance);
+              }
+              if (!remains_in_el) {
+                printf(
+                    "It didn't remain in the element but not found in the "
+                    "adjacent faces\n");
+              }
+              printf(
+                  "Error: Particle pid %d not found anywhere. Lost from "
+                  "element %d\n",
+                  pid, e);
+              printf("Origin: %.16f %.16f %.16f\n", origin_rThz[0],
+                     origin_rThz[1], origin_rThz[2]);
+              printf("Destination: %.16f %.16f %.16f\n", dest_rThz[0],
+                     dest_rThz[1], dest_rThz[2]);
+              search_through_mesh(mesh, dest_rThz);
+              OMEGA_H_CHECK(false);
+            }  // fails if not found for an inner face
+          }  // search node adj faces
           // if not found and number of adj_faces is less than 3, that means the
           // partice moved out of the boundary
           if (!found_next_face &&

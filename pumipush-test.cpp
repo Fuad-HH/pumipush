@@ -23,8 +23,10 @@ void checkCPNFileReading(o::Library* lib);
 void check2dBox(o::Library* lib);
 void check_cyl2cart();
 void test_intersection();
+void test_on_edge_origin_case();
 
 int main(int argc, char** argv) {
+  test_on_edge_origin_case();
   test_intersection();
   auto lib = o::Library(&argc, &argv);
   OMEGA_H_CHECK(std::string(lib.version()) == OMEGA_H_SEMVER);
@@ -175,10 +177,15 @@ std::optional<o::Vector<2>> find_intersection_point(
   //   printf("\n");
   // }
   auto det = o::determinant(A);
-  if (std::abs(det) < 10e-10) {
+  if (std::abs(det) < EPSILON) {
     return {};
   }
   o::Vector<2> x = o::invert(A) * b;
+  // if intersects near the origin, return the origin
+  if (x[0] > -1e-6 && x[0] < 0) {  // todo not the best way to handle this
+    printf("Origin on the edge\n");
+    return line1[0];
+  }
   if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
     return {};
   }
@@ -200,6 +207,17 @@ double find_intersection_distance_tri(
   } else {
     return -1.0;
   }
+}
+void test_on_edge_origin_case() {
+  printf("Test: origin on edge...\n");
+  o::Few<o::Vector<2>, 2> edge = {{2.6217217103259052, 0.2984345434763631},
+                                  {2.6279145475054091, 0.2928020473794012}};
+  o::Few<o::Vector<2>, 2> ray = {{2.6231560255680102, 0.2971300081293064},
+                                 {2.6228101864056441, 0.2980303188213828}};
+  auto intersection_point = find_intersection_point(ray, edge);
+  OMEGA_H_CHECK(intersection_point.has_value());
+  double intersection_distance = find_intersection_distance_tri(ray, edge);
+  OMEGA_H_CHECK(std::abs(intersection_distance - 0.000000) < 1.0e-6);
 }
 void test_intersection() {
   o::Few<o::Vector<2>, 2> line1 = {{-1, 0.5}, {1, 0.5}};
