@@ -55,15 +55,16 @@ int main(int argc, char* argv[]) {
   // Omega_h::BBox<3> bb = Omega_h::find_bounding_box<3>(full_mesh.coords());
 
   // ******************* Partition Loading ******************* //
-  o::Write<o::LO> owners = o::Write<o::LO>(full_mesh.nelems(), 0);
+  // o::HostWrite<o::LO> h_owners(full_mesh.nelems());
 
+  o::Write<o::LO> owners(full_mesh.nelems());
   partitionMeshEqually(full_mesh, owners, comm_size, comm_rank);
 #ifdef DEBUG
   printf("INFO: Owners list of the mesh created successfully\n");
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
-  p::Mesh picparts(full_mesh, owners, 3, 2);
+  p::Mesh picparts(full_mesh, owners);
   printf("Partitioned the mesh successfully\n");
 
   o::Mesh* mesh = picparts.mesh();
@@ -102,7 +103,7 @@ int main(int argc, char* argv[]) {
          setPtcls, comm_rank);
 
   Kokkos::TeamPolicy<ExeSpace> policy =
-      Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, Kokkos::AUTO());
+      Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, 32);
   // Sell-C-Sigma particle structure: see the pumipic paper for more details
   PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 10, ne, setPtcls,
                                        ptcls_per_elem, element_gids);
@@ -110,8 +111,8 @@ int main(int argc, char* argv[]) {
   printf("INFO: Particle structure created successfully in rank %d\n",
          comm_rank);
 #endif
-
-  setInitialPtclCoords(picparts, ptcls);
+  random_pool_t random_pool(347932874);
+  setInitialPtclCoords(picparts, ptcls, random_pool);
 #ifdef DEBUG
   printf("INFO: Initial positions of particles set... in rank %d\n", comm_rank);
 #endif

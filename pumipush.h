@@ -5,6 +5,7 @@
 
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Core_fwd.hpp>
+#include <Kokkos_Random.hpp>
 #include <Omega_h_array.hpp>
 #include <Omega_h_bbox.hpp>
 #include <Omega_h_file.hpp>
@@ -19,10 +20,27 @@
 
 // #include "redev.h"
 
+#include <Segment.h>
+#include <ppMacros.h>
+
 #include "pumipic_adjacency.hpp"
 #include "pumipic_mesh.hpp"
 #include "pumipic_ptcl_ops.hpp"
-// #include <team_policy.hpp>
+
+// #include <Kokkos_Core_fwd.hpp>
+#include <Kokkos_MinMax.hpp>
+#include <Omega_h_adj.hpp>
+#include <Omega_h_bbox.hpp>
+#include <Omega_h_matrix.hpp>
+#include <Omega_h_mesh.hpp>
+#include <Omega_h_shape.hpp>
+#include <Omega_h_vector.hpp>
+#include <cstdlib>
+#include <optional>
+#include <particle_structure.hpp>
+#include <pumipic_adjacency.tpp>
+#include <pumipic_constants.hpp>
+
 #define NUM_ITERATIONS 30
 
 using particle_structs::lid_t;
@@ -42,8 +60,17 @@ namespace ps = particle_structs;
 typedef MemberTypes<Vector3d, Vector3d, int> Particle;
 typedef ps::ParticleStructure<Particle> PS;
 typedef Kokkos::DefaultExecutionSpace ExeSpace;
+typedef Kokkos::Random_XorShift64_Pool<Kokkos::DefaultExecutionSpace>
+    random_pool_t;
 
+struct IntersectionResult {
+  bool exists;
+  o::Vector<2> point;
+};
 // ******************** Function Prototypes ******************** //
+Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
+    int league_size, int team_size);
+
 OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
                                              o::Few<o::LO, 4> v);
 
@@ -51,7 +78,7 @@ OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
  * @brief Generate a random path length using an exponential distribution
  * TODO: make this lambda a mean free path length
  */
-inline double random_path_length(double lambda);
+OMEGA_H_DEVICE double random_path_length(double lambda, random_pool_t pool);
 
 o::Mesh readMesh(std::string meshFile, o::Library& lib);
 
@@ -64,7 +91,8 @@ int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
 /**
  * Set the initial particle coordinates to the centroid of the parent element
  */
-void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls);
+void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
+                          random_pool_t random_pool);
 
 /**
  * Set the particle ids to the particle index
@@ -91,7 +119,8 @@ void push(PS* ptcls, int np, double lambda);
 /**
  * Get a random direction uniformly distributed on the unit sphere
  */
-inline o::Vector<3> sampleRandomDirection(const double A = 1.0);
+OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
+                                                  random_pool_t random_pool);
 
 /**
  * Update the particle positions to the new target positions
@@ -156,7 +185,7 @@ OMEGA_H_DEVICE double find_intersection_distance_tri(
     const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
     const o::Few<o::Vector<2>, 2>& tri_edge);
 
-OMEGA_H_DEVICE std::optional<o::Vector<2>> find_intersection_point(
+OMEGA_H_DEVICE IntersectionResult find_intersection_point(
     o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2);
 
 #endif

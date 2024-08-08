@@ -1,34 +1,29 @@
 #include "pumipush.h"
 
-#include <Segment.h>
 #include <ppMacros.h>
 
-#include <Kokkos_Core_fwd.hpp>
-#include <Kokkos_MinMax.hpp>
-#include <Omega_h_adj.hpp>
-#include <Omega_h_array.hpp>
-#include <Omega_h_bbox.hpp>
-#include <Omega_h_matrix.hpp>
-#include <Omega_h_mesh.hpp>
-#include <Omega_h_shape.hpp>
-#include <Omega_h_vector.hpp>
-#include <cstdlib>
-#include <optional>
-#include <particle_structure.hpp>
-#include <pumipic_adjacency.tpp>
-#include <pumipic_constants.hpp>
-#include <pumipic_kktypes.hpp>
+Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
+    int league_size, int team_size) {
+#ifdef PP_USE_GPU
+  return Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(league_size,
+                                                           team_size);
+#else
+  return Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(league_size,
+                                                           Kokkos::AUTO());
+#endif
+}
 
-std::random_device rd;
-auto seed = 0;
-std::mt19937 gen(seed);
-std::uniform_real_distribution<> dis(0, 1);
+// std::random_device rd;
+// auto seed = 0;
+// std::mt19937 gen(seed);
+// std::uniform_real_distribution<> dis(0, 1);
 
-inline double random_path_length(double lambda) {
+OMEGA_H_DEVICE double random_path_length(double lambda, random_pool_t pool) {
   // ref:
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
-
-  double l = -std::log(dis(gen)) * lambda;
+  auto gen = pool.get_state();
+  double rn = gen.drand(0., 1.);
+  double l = -std::log(rn) * lambda;
   return l;
 }
 
@@ -76,7 +71,8 @@ OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
   return o::gather_vectors<4, 3>(a, v);
 }
 
-void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls) {
+void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
+                          random_pool_t random_pool) {
   // get centroid of parent element and set the child particle coordinates
   // most of this is copied from Omega_h_overlay.cpp get_cell_center_location
   // It isn't clear why the template parameter for gather_[verts|vectors] was
@@ -104,7 +100,9 @@ void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls) {
         o::Few<o::Real, 2> center;
         get_tri_centroid(cells2nodes, e, nodes2coords, center);
         // random theta from -pi to pi
-        double random_theta = 2 * M_PI * (rand() / (RAND_MAX + 1.0)) - M_PI;
+        auto gen = random_pool.get_state();
+        double rn = gen.drand(-1., 1.);
+        double random_theta = rn * M_PI;
         // r, theta, z
         x_ps_d(pid, 0) = center[0];
         x_ps_d(pid, 1) = random_theta;
@@ -117,8 +115,8 @@ void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls) {
         x_ps_d(pid, 1) = center[1];
         x_ps_d(pid, 2) = center[2];
       } else {
-        std::cerr << "Error: unsupported dimension\n";
-        exit(1);
+        printf("Error: unsupported dimension\n");
+        // exit(1);
       }
     }
   };
@@ -150,16 +148,17 @@ void pseudo2Dpush(PS* ptcls, double lambda) {
 
   double totTime = 0;
   timer.reset();
+  random_pool_t pool(0);
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
       // fp_t dir[3];
-      double distance = random_path_length(lambda);
+      double distance = random_path_length(lambda, pool);
       o::Vector<3> cyl_coords = {position_d(pid, 0), position_d(pid, 1),
                                  position_d(pid, 2)};
       o::Vector<3> cart_coords;
       cylindrical2cartesian(cyl_coords, cart_coords);
 
-      o::Vector<3> direction_vec = sampleRandomDirection();
+      o::Vector<3> direction_vec = sampleRandomDirection(1, pool);
       o::Vector<3> new_position_cart = cart_coords + (distance * direction_vec);
       cartesian2cylindrical(new_position_cart, cyl_coords);
       new_position_d(pid, 0) = cyl_coords[0];
@@ -179,12 +178,13 @@ void push(PS* ptcls, int np, double lambda) {
   auto new_position_d = ptcls->get<1>();
 
   double totTime = 0;
+  random_pool_t pool(1937493);
   timer.reset();
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
       // fp_t dir[3];
-      double distance = random_path_length(lambda);
-      o::Vector<3> disp_d = sampleRandomDirection();
+      double distance = random_path_length(lambda, pool);
+      o::Vector<3> disp_d = sampleRandomDirection(1, pool);
       new_position_d(pid, 0) = position_d(pid, 0) + distance * disp_d[0];
       new_position_d(pid, 1) = position_d(pid, 1) + distance * disp_d[1];
       new_position_d(pid, 2) = position_d(pid, 2) + distance * disp_d[2];
@@ -196,18 +196,22 @@ void push(PS* ptcls, int np, double lambda) {
   printTiming("ps push", totTime);
 }
 
-inline o::Vector<3> sampleRandomDirection(const double A) {
+OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
+                                                  random_pool_t random_pool) {
   // ref
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
   // ref
   // std::random_device rd;
   // std::mt19937 gen(0);
   // std::uniform_real_distribution<> dis(0, 1);
-  double mu = 2 * dis(gen) - 1;
+  auto gen = random_pool.get_state();
+  double rn = gen.drand(0., 1.);
+  double rn2 = gen.drand(0., 1.);
+  double mu = 2 * rn - 1;
   // cosine in the particles incident direction
   double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
   // cosine with the plane of the collision
-  double nu_lab = 2 * dis(gen) - 1;
+  double nu_lab = 2 * rn2 - 1;
   o::Vector<3> dir;
 
   // TODO: replace this dummy direction with the actual direction
@@ -286,8 +290,9 @@ OMEGA_H_DEVICE bool counter_clockwise(const Omega_h::Vector<2>& a,
   return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
 }
 
-OMEGA_H_DEVICE std::optional<o::Vector<2>> find_intersection_point(
+OMEGA_H_DEVICE IntersectionResult find_intersection_point(
     o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2) {
+  IntersectionResult result;
   auto b = line2[0] - line1[0];
   o::Matrix<2, 2> A;
   A[0] = line1[1] - line1[0];
@@ -303,18 +308,21 @@ OMEGA_H_DEVICE std::optional<o::Vector<2>> find_intersection_point(
   // }
   auto det = o::determinant(A);
   if (std::abs(det) < EPSILON) {
-    return {};
+    result.exists = false;
   }
   o::Vector<2> x = o::invert(A) * b;
   // if intersects near the origin, return the origin
   if (x[0] > -EPSILON && x[0] < 0) {  // todo not the best way to handle this
-    return line1[0];
+    result.exists = true;
+    result.point = line1[0];
   }
   if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
-    return {};
+    result.exists = false;
   }
   o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
-  return intersection_point;
+  result.exists = true;
+  result.point = intersection_point;
+  return result;
 }
 
 OMEGA_H_DEVICE double distance_between_points(o::Vector<2> p1,
@@ -327,8 +335,11 @@ OMEGA_H_DEVICE double find_intersection_distance_tri(
     const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
     const o::Few<o::Vector<2>, 2>& tri_edge) {
   // test_intersection();
-  if (auto intersection_point = find_intersection_point(start_dest, tri_edge)) {
-    return distance_between_points(start_dest[0], intersection_point.value());
+  IntersectionResult intersection_point_struct =
+      find_intersection_point(start_dest, tri_edge);
+  if (intersection_point_struct.exists) {
+    auto intersection_point = intersection_point_struct.point;
+    return distance_between_points(start_dest[0], intersection_point);
   } else {
     return -1.0;
   }
@@ -362,9 +373,9 @@ OMEGA_H_DEVICE void search_through_mesh(const o::Mesh& mesh, o::Vector<3> x) {
 }
 
 bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
-                         p::Segment<double[3], Kokkos::HostSpace> x,
-                         p::Segment<double[3], Kokkos::HostSpace> xtgt,
-                         p::Segment<int, Kokkos::HostSpace> pid,
+                         p::Segment<double[3], Kokkos::CudaSpace> x,
+                         p::Segment<double[3], Kokkos::CudaSpace> xtgt,
+                         p::Segment<int, Kokkos::CudaSpace> pid,
                          o::Write<o::LO> elem_ids, o::Write<o::Real> xpoints_d,
                          o::Write<o::LO> xface_id,
                          o::Read<o::I8> zone_boundary_sides,
@@ -384,7 +395,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
   const auto psCapacity = ptcls->capacity();
 
   o::Write<o::LO> ptcl_done(psCapacity, 0, "search_done");
-  o::Write<o::LO> elem_ids_next(psCapacity);
+  o::Write<o::LO> elem_ids_next(psCapacity, -1, "elem_ids_next");
 
   auto fill = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask > 0) {
@@ -394,12 +405,15 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
     }
   };
   parallel_for(ptcls, fill, "searchMesh_fill_elem_ids");
+  printf("INFO: Starting search for the particles\n");
 
   bool found = false;
 
   {  // original search in pumipush does it in a loop but here it is searched
-    // only once since it only moves to the adj faces
-    auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+     // only once since it only moves to the adj faces
+    o::Write<o::LO> remains_in_el(psCapacity, 0, "remains_in_el");
+    auto check_initial_position =
+        PS_LAMBDA(const int& e, const int& pid, const int& mask) {
       if (mask > 0 && ptcl_done[pid] == 0) {
         auto elmId = elem_ids[pid];
         OMEGA_H_CHECK(elmId >= 0);
@@ -410,206 +424,255 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
         const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
             o::gather_vectors<3, 2>(coords, current_el_verts);
-
-        {  // check if the particle is in the element
-          bcc = o::barycentric_from_global<2, 2>(
-              {origin_rThz[0], origin_rThz[2]}, current_el_vert_coords);
-          if (!all_positive(bcc)) {
-            printf(
-                "Error: Particle not in this "
-                "element"
-                "\tpid %d elem %d\n",
-                pid, elmId);
-            printf("bcc %.16f %.16f %.16f\n", bcc[0], bcc[1], bcc[2]);
-            printf("Position of the element: %.16f %.16f\n", origin_rThz[0],
-                   origin_rThz[2]);
-            printf("Face vertex ids: %d %d %d\n", current_el_verts[0],
-                   current_el_verts[1], current_el_verts[2]);
-            // grab the location and find out the element
-            search_through_mesh(mesh, origin_rThz);
-            OMEGA_H_CHECK(false);
-          }
-        }
-
-        bool remains_in_el = false;
-        {
-          // check if the destination is in the element
-          bcc = o::barycentric_from_global<2, 2>({dest_rThz[0], dest_rThz[2]},
-                                                 current_el_vert_coords);
-          remains_in_el = all_positive(bcc);
-        }
-
-        // find the intersection distance
-        double intersection_distance = -1.0;
-        int edge_id = -1;
-        Omega_h::Vector<2> origin_rz = {origin_rThz[0], origin_rThz[2]};
-        Omega_h::Vector<2> dest_rz = {dest_rThz[0], dest_rThz[2]};
-        for (int i = 0; i < 3; i++) {
-          int j = (i + 1) % 3;
-          intersection_distance = find_intersection_distance_tri(
-              {origin_rz, dest_rz},
-              {current_el_vert_coords[i], current_el_vert_coords[j]});
-          if (intersection_distance >
-              -tol) {  // epsilon to manage origin on the edge
-            /// printf("! Intersected: Intersection distance %f\n",
-            /// intersection_distance);
-            intersection_distance = tol;  // to move inside the next element
-            edge_id = i;
-            break;
-          }
-        }
-
-        // if the particle remains in the element, and didn't intersect any edge
-        // then it's done
-        if (remains_in_el &&
-            intersection_distance < 0) {  // particle remained in the same
-                                          // element: checked previously
-          // with bcc and intersection distance
-          elem_ids_next[pid] = e;
-          ptcl_done[pid] = 1;
-        }
-
-        // if the particle didn't remain in the same element and didn't
-        // intersect it's an error
-        if ((!remains_in_el && intersection_distance < 0) ||
-            (remains_in_el && intersection_distance > 0)) {
+        // check if the particle is in the element
+        bcc = o::barycentric_from_global<2, 2>({origin_rThz[0], origin_rThz[2]},
+                                               current_el_vert_coords);
+        if (!all_positive(bcc)) {
           printf(
-              "Error!!!: Particle pid %d didn't remain in the element %d but "
-              "didn't intersect\n",
-              pid, e);
-          printf("Origin     : %.16f, %.16f\n", origin_rThz[0], origin_rThz[2]);
-          printf("Destination: %.16f, %.16f\n", dest_rThz[0], dest_rThz[2]);
-          printf("Intersection distance: %.16f\n", intersection_distance);
-          search_through_mesh(mesh, dest_rThz);
+              "Error: Particle not in this "
+              "element"
+              "\tpid %d elem %d\n",
+              pid, elmId);
+          printf("bcc %.16f %.16f %.16f\n", bcc[0], bcc[1], bcc[2]);
+          printf("Position of the element: %.16f %.16f\n", origin_rThz[0],
+                 origin_rThz[2]);
+          printf("Face vertex ids: %d %d %d\n", current_el_verts[0],
+                 current_el_verts[1], current_el_verts[2]);
+          // grab the location and find out the element
+          // search_through_mesh(mesh, origin_rThz);
           OMEGA_H_CHECK(false);
         }
-
-        // get intersetion edge: if it intersected or didn't remain in the same
-        // element (starts on edge)
-        if (intersection_distance > 0 && !remains_in_el) {
-          // printf("Intersection distance %f\n", intersection_distance);
-
-          intersection_distance += tol;  // to move inside the next element
-          o::Vector<3> new_position_cyl_cp = {xtgt(pid, 0), xtgt(pid, 1),
-                                              xtgt(pid, 2)};
-          o::Vector<3> dest_xyz;
-          cylindrical2cartesian(dest_rThz, dest_xyz);
-          // it's the new position but with the same theta
-          o::Vector<3> dest_rThz_Th_plane = {dest_rThz[0], origin_rThz[1],
-                                             dest_rThz[2]};
-          o::Vector<3> dest_xyz_Th_plane;
-          o::Vector<3> origin_xyz;
-          cylindrical2cartesian(origin_rThz, origin_xyz);
-          cylindrical2cartesian(dest_rThz_Th_plane, dest_xyz_Th_plane);
-          auto direction_xyz =
-              (dest_xyz - origin_xyz) / o::norm(dest_xyz - origin_xyz);
-#ifdef DEBUG
-          // assert that the direction is unit vector
-          OMEGA_H_CHECK(std::abs(o::norm(direction_xyz) - 1.0) <
-                        1.0e-10);  // todo remove this check and the next
-#endif
-          auto direction_Th_plane = (dest_xyz_Th_plane - origin_xyz) /
-                                    o::norm(dest_xyz_Th_plane - origin_xyz);
-#ifdef DEBUG
-          OMEGA_H_CHECK(std::abs(o::norm(direction_Th_plane) - 1.0) < 1.0e-10);
-#endif
-          double dot_product =
-              o::inner_product(direction_xyz, direction_Th_plane);
-          double intersection_distance_xyz =
-              intersection_distance / dot_product;
-
-          dest_xyz = origin_xyz + (direction_xyz * intersection_distance_xyz);
-          cartesian2cylindrical(dest_xyz, dest_rThz);
-
-          xtgt(pid, 0) = dest_rThz[0];
-          xtgt(pid, 1) = dest_rThz[1];
-          xtgt(pid, 2) = dest_rThz[2];
-          dest_rz = {dest_rThz[0], dest_rThz[2]};
-          // get the next element: loop throught the adjaecnt faces current face
-          // and check the bcc of the new position
-          int n_adj_faces = face2faceOffsets[e + 1] - face2faceOffsets[e];
-
-          // loop thought the faces and check if the bcc in the new position is
-          // all positive
-          bool found_next_face = false;
-          for (int i = 0; i < n_adj_faces; i++) {  // edge adj faces
-            int adj_face = face2faceFace[face2faceOffsets[e] + i];
-            auto adj_face_verts = o::gather_verts<3>(faces2nodes, adj_face);
-            Omega_h::Few<Omega_h::Vector<2>, 3> adj_face_vert_coords =
-                o::gather_vectors<3, 2>(coords, adj_face_verts);
-            o::Vector<3> bcc =
-                o::barycentric_from_global<2, 2>(dest_rz, adj_face_vert_coords);
-            if (all_positive(bcc, tol)) {
-              elem_ids_next[pid] = adj_face;
-              found_next_face = true;
-              break;
-            }
-          }
-
-          if (!found_next_face) {  // node adj faces
-            // printf("*");
-            for (int node = 0; node < 3; node++) {
-              int cur_vert = current_el_verts[node];
-              int n_node_adj_face =
-                  node2faceOffsets[cur_vert + 1] - node2faceOffsets[cur_vert];
-              for (int i = 0; i < n_node_adj_face; i++) {
-                auto node_adj_face =
-                    node2faceFace[node2faceOffsets[cur_vert] + i];
-                auto face_verts =
-                    o::gather_verts<3>(faces2nodes, node_adj_face);
-                auto face_vert_coords =
-                    o::gather_vectors<3, 2>(coords, face_verts);
-                o::Vector<3> bcc =
-                    o::barycentric_from_global<2, 2>(dest_rz, face_vert_coords);
-                if (all_positive(bcc, tol)) {
-                  // printf("Face Vertices: %d %d %d\n", face_verts[0],
-                  //        face_verts[1], face_verts[2]);
-                  elem_ids_next[pid] = node_adj_face;
-                  found_next_face = true;
-                  break;
-                }
-              }
-            }
-            if (!found_next_face && n_adj_faces >= 3) {  // lost from inner face
-              elem_ids_next[pid] = -1;
-              // find all over the mesh
-              if (intersection_distance > 0) {
-                printf(
-                    "It intersected: distance=%.16f but not found in the "
-                    "adjacent faces\n",
-                    intersection_distance);
-              }
-              if (!remains_in_el) {
-                printf(
-                    "It didn't remain in the element but not found in the "
-                    "adjacent faces\n");
-              }
-              printf(
-                  "Error: Particle pid %d not found anywhere. Lost from "
-                  "element %d\n",
-                  pid, e);
-              printf("Origin: %.16f %.16f %.16f\n", origin_rThz[0],
-                     origin_rThz[1], origin_rThz[2]);
-              printf("Destination: %.16f %.16f %.16f\n", dest_rThz[0],
-                     dest_rThz[1], dest_rThz[2]);
-              search_through_mesh(mesh, dest_rThz);
-              OMEGA_H_CHECK(false);
-            }  // fails if not found for an inner face
-          }  // search node adj faces
-          // if not found and number of adj_faces is less than 3, that means the
-          // partice moved out of the boundary
-          if (!found_next_face &&
-              n_adj_faces < 3) {  // TODO better way to check out of boundary
-            elem_ids_next[pid] = -1;  // out of boundary
-          }
-
-          // done with the particle
-          ptcl_done[pid] = 1;
-
-        }  // if intersected or not in the same element
-      }  // search each particle
+        // check remains in the element
+        bcc = o::barycentric_from_global<2, 2>({dest_rThz[0], dest_rThz[2]},
+                                               current_el_vert_coords);
+        remains_in_el[pid] = int(all_positive(bcc));
+      }
     };
-    parallel_for(ptcls, lamb, "adj_search");
+    parallel_for(ptcls, check_initial_position, "check_initial_postion");
+
+    // find the intersection distance
+    o::Write<o::LO> intersection_distance(psCapacity, -1.0,
+                                          "intersection_distance");
+
+    auto get_intersection_distance =
+        PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+      if (mask > 0 && ptcl_done[pid] == 0) {
+        const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
+        const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
+            o::gather_vectors<3, 2>(coords, current_el_verts);
+        const o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1),
+                                        xtgt(pid, 2)};
+        const o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
+        const o::Vector<2> origin_rz = {origin_rThz[0], origin_rThz[2]};
+        const o::Vector<2> dest_rz = {dest_rThz[0], dest_rThz[2]};
+        o::Real cur_int_dist = -1.0;
+        for (int i = 0; i < 3; i++) {  // todo expand the loop and if
+          int j = (i + 1) % 3;
+          cur_int_dist = find_intersection_distance_tri(
+              {origin_rz, dest_rz},
+              {current_el_vert_coords[i], current_el_vert_coords[j]});
+          o::Real temp_dist = cur_int_dist + tol;
+          intersection_distance[pid] =
+              (cur_int_dist > -tol) ? temp_dist : intersection_distance[pid];
+        }
+      }
+    };
+    parallel_for(ptcls, get_intersection_distance, "get_intersection_distance");
+
+    // if the particle remains in the element, and didn't intersect any edge
+    // then it's done
+    auto if_in_same_el =
+        PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+      if (mask > 0 && ptcl_done[pid] == 0) {
+        o::Real cur_int_dist = intersection_distance[pid];
+        o::LO cur_remain_in_el = remains_in_el[pid];
+        elem_ids_next[pid] =
+            (cur_remain_in_el && cur_int_dist < 0) ? e : elem_ids_next[pid];
+        ptcl_done[pid] =
+            (cur_remain_in_el && cur_int_dist < 0) ? 1 : ptcl_done[pid];
+      }
+    };
+    parallel_for(ptcls, if_in_same_el, "if_in_same_el");
+
+    // if the particle didn't remain in the same element and didn't
+    // intersect it's an error
+    // if ((!remains_in_el && intersection_distance < 0) ||
+    //    (remains_in_el && intersection_distance > 0)) {
+    //  printf(
+    //      "Error!!!: Particle pid %d didn't remain in the element %d but "
+    //      "didn't intersect\n",
+    //      pid, e);
+    //  printf("Origin     : %.16f, %.16f\n", origin_rThz[0], origin_rThz[2]);
+    //  printf("Destination: %.16f, %.16f\n", dest_rThz[0], dest_rThz[2]);
+    //  printf("Intersection distance: %.16f\n", intersection_distance);
+    //  search_through_mesh(mesh, dest_rThz);
+    //  OMEGA_H_CHECK(false);
+    //}
+
+    // get intersetion edge: if it intersected or didn't remain in the same
+    // element (starts on edge)
+    auto update_dest_position =
+        PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+      if (mask > 0 && ptcl_done[pid] == 0) {
+        o::Real cur_int_dist = intersection_distance[pid];
+        o::LO cur_remain_in_el = remains_in_el[pid];
+        // if (cur_int_dist > 0 && !cur_remain_in_el) {
+        //  printf("Intersection distance %f\n", cur_int_dist);
+
+        cur_int_dist += tol;  // to move inside the next element
+        intersection_distance[pid] = cur_int_dist;
+        o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
+        o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
+        o::Vector<3> dest_xyz;
+        cylindrical2cartesian(dest_rThz, dest_xyz);
+        // it's the new position but with the same theta
+        o::Vector<3> dest_rThz_Th_plane = {dest_rThz[0], origin_rThz[1],
+                                           dest_rThz[2]};
+        o::Vector<3> dest_xyz_Th_plane;
+        o::Vector<3> origin_xyz;
+        cylindrical2cartesian(origin_rThz, origin_xyz);
+        cylindrical2cartesian(dest_rThz_Th_plane, dest_xyz_Th_plane);
+        auto direction_xyz =
+            (dest_xyz - origin_xyz) / o::norm(dest_xyz - origin_xyz);
+#ifdef DEBUG
+        // assert that the direction is unit vector
+        OMEGA_H_CHECK(std::abs(o::norm(direction_xyz) - 1.0) <
+                      1.0e-10);  // todo remove this check and the next
+#endif
+        auto direction_Th_plane = (dest_xyz_Th_plane - origin_xyz) /
+                                  o::norm(dest_xyz_Th_plane - origin_xyz);
+#ifdef DEBUG
+        OMEGA_H_CHECK(std::abs(o::norm(direction_Th_plane) - 1.0) < 1.0e-10);
+#endif
+        double dot_product =
+            o::inner_product(direction_xyz, direction_Th_plane);
+        double intersection_distance_xyz = cur_int_dist / dot_product;
+
+        dest_xyz = origin_xyz + (direction_xyz * intersection_distance_xyz);
+        cartesian2cylindrical(dest_xyz, dest_rThz);
+
+        xtgt(pid, 0) = dest_rThz[0];
+        xtgt(pid, 1) = dest_rThz[1];
+        xtgt(pid, 2) = dest_rThz[2];
+        //}  // if intersected or not in the same element
+      }  // if mask
+    };  // update_dest_position lambda
+    parallel_for(ptcls, update_dest_position, "update_dest_position");
+    printf("INFO: Finished updating the destination position on rank %d\n",
+           mesh.comm()->rank());
+
+    auto find_next_element_in_ajd_faces =
+        PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+      if (mask > 0 && ptcl_done[pid] == 0) {
+        o::Real cur_int_dist = intersection_distance[pid];
+        o::LO cur_remain_in_el = remains_in_el[pid];
+        // if (cur_int_dist > 0 && !cur_remain_in_el) {
+        const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
+        const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
+            o::gather_vectors<3, 2>(coords, current_el_verts);
+        o::Vector<2> dest_rz = {xtgt(pid, 0), xtgt(pid, 2)};
+        o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
+        o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
+        // get the next element: loop throught the adjaecnt faces current face
+        // and check the bcc of the new position
+        int n_adj_faces = face2faceOffsets[e + 1] - face2faceOffsets[e];
+
+        // loop thought the faces and check if the bcc in the new position is
+        // all positive
+        // bool found_next_face = false;
+        for (int i = 0; i < n_adj_faces; i++) {  // edge adj faces
+          int adj_face = face2faceFace[face2faceOffsets[e] + i];
+          auto adj_face_verts = o::gather_verts<3>(faces2nodes, adj_face);
+          Omega_h::Few<Omega_h::Vector<2>, 3> adj_face_vert_coords =
+              o::gather_vectors<3, 2>(coords, adj_face_verts);
+          o::Vector<3> bcc =
+              o::barycentric_from_global<2, 2>(dest_rz, adj_face_vert_coords);
+          elem_ids_next[pid] =
+              (all_positive(bcc, tol)) ? adj_face : elem_ids_next[pid];
+          ptcl_done[pid] = (all_positive(bcc, tol)) ? 1 : ptcl_done[pid];
+        }
+      }
+    };
+    parallel_for(ptcls, find_next_element_in_ajd_faces,
+                 "find_next_element_in_ajd_faces");
+
+    auto find_next_element_in_node_adj_faces =
+        PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+      if (mask > 0 && ptcl_done[pid] == 0) {
+        o::Real cur_int_dist = intersection_distance[pid];
+        o::LO cur_remain_in_el = remains_in_el[pid];
+        // if (cur_int_dist > 0 && !cur_remain_in_el) {
+        const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
+        const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
+            o::gather_vectors<3, 2>(coords, current_el_verts);
+        o::Vector<2> dest_rz = {xtgt(pid, 0), xtgt(pid, 2)};
+        o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
+        o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
+        // get the next element: loop throught the adjaecnt faces current face
+        // and check the bcc of the new position
+        int n_adj_faces = face2faceOffsets[e + 1] - face2faceOffsets[e];
+        // printf("*");
+        for (int node = 0; node < 3; node++) {
+          int cur_vert = current_el_verts[node];
+          int n_node_adj_face =
+              node2faceOffsets[cur_vert + 1] - node2faceOffsets[cur_vert];
+          for (int i = 0; i < n_node_adj_face; i++) {
+            auto node_adj_face = node2faceFace[node2faceOffsets[cur_vert] + i];
+            auto face_verts = o::gather_verts<3>(faces2nodes, node_adj_face);
+            auto face_vert_coords = o::gather_vectors<3, 2>(coords, face_verts);
+            o::Vector<3> bcc =
+                o::barycentric_from_global<2, 2>(dest_rz, face_vert_coords);
+            elem_ids_next[pid] =
+                (all_positive(bcc, tol)) ? node_adj_face : elem_ids_next[pid];
+            ptcl_done[pid] = (all_positive(bcc, tol)) ? 1 : ptcl_done[pid];
+          }
+        }
+
+        elem_ids_next[pid] = (n_adj_faces < 3 && ptcl_done[pid] == 0)
+                                 ? -1
+                                 : elem_ids_next[pid];  // out of boundary
+        ptcl_done[pid] =
+            (n_adj_faces < 3 && ptcl_done[pid] == 0) ? 1 : ptcl_done[pid];
+        // if (!found_next_face && n_adj_faces >= 3) {  // lost from inner face
+        //   elem_ids_next[pid] = -1;
+        //   // find all over the mesh
+        //   if (cur_int_dist > 0) {
+        //     printf(
+        //         "It intersected: distance=%.16f but not found in the "
+        //         "adjacent faces\n",
+        //         cur_int_dist);
+        //   }
+        //   if (!cur_remain_in_el) {
+        //     printf(
+        //         "It didn't remain in the element but not found in the "
+        //         "adjacent faces\n");
+        //   }
+        //   printf(
+        //       "Error: Particle pid %d not found anywhere. Lost from "
+        //       "element %d\n",
+        //       pid, e);
+        //   printf("Origin: %.16f %.16f %.16f\n", origin_rThz[0],
+        //          origin_rThz[1], origin_rThz[2]);
+        //   printf("Destination: %.16f %.16f %.16f\n", dest_rThz[0],
+        //          dest_rThz[1], dest_rThz[2]);
+        //   search_through_mesh(mesh, dest_rThz);
+        //   OMEGA_H_CHECK(false);
+        // }  // fails if not found for an inner face
+      }  // search node adj faces
+      // if not found and number of adj_faces is less than 3, that means the
+      // partice moved out of the boundary
+      // if (!found_next_face &&
+      //    n_adj_faces < 3) {  // TODO better way to check out of boundary
+      //  elem_ids_next[pid] = -1;  // out of boundary
+      //}
+      //// done with the particle
+      // ptcl_done[pid] = 1;
+
+      //}  // if intersected or not in the same element
+      //}  // if mask
+    };  // find_next_element lambda
+    parallel_for(ptcls, find_next_element_in_node_adj_faces,
+                 "find_next_element_in_node_adj_faces");
     found = true;
     auto cp_elm_ids = OMEGA_H_LAMBDA(o::LO i) {
       elem_ids[i] = elem_ids_next[i];
@@ -692,6 +755,11 @@ void ownerFromCPN(const std::string cpn_file_name, o::Write<o::LO>& owners) {
 
 void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
                           int comm_rank) {
+  // if comm_size is 1, then all elements are owned by rank 0
+  if (comm_size == 1) {
+    o::parallel_for(mesh.nelems(), OMEGA_H_LAMBDA(o::LO i) { owners[i] = 0; });
+    return;
+  }
   int dim = mesh.dim();
   o::Vector<2> min;
   o::Vector<2> max;
@@ -726,7 +794,7 @@ void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
 
   auto nodes2coords = mesh.coords();
   auto lamb = OMEGA_H_LAMBDA(o::LO i) {
-    std::array<double, 2> center2d;
+    o::Vector<2> center2d;
     if (dim == 3) {
       auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(i));
       auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
@@ -749,7 +817,7 @@ void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
       printf("Center: %f %f\n", center2d[0], center2d[1]);
       printf("Bounding box: %f %f %f %f and dim = %d\n", startx, max[0], starty,
              max[1], dim);
-      exit(1);
+      OMEGA_H_CHECK(false);
     }
     // get rank based on the location of the center2d starting from the
     // lower-left corner and moving up and right
@@ -758,13 +826,13 @@ void partitionMeshEqually(o::Mesh& mesh, o::Write<o::LO> owners, int comm_size,
     if (rank >= comm_size || rank < 0) {
       printf("Error: rank is out of bounds\n");
       printf("Rank: %d comm_size: %d\n", rank, comm_size);
-      exit(1);
+      OMEGA_H_CHECK(false);
     }
     owners[i] = rank;
   };
   o::parallel_for(mesh.nelems(), lamb);
   if (comm_rank == 0) {
-    varify_balance_of_partitions(owners, comm_size);
+    // varify_balance_of_partitions(owners, comm_size);
   }
 }
 
