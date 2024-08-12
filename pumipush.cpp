@@ -13,16 +13,9 @@ Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
 #endif
 }
 
-// std::random_device rd;
-// auto seed = 0;
-// std::mt19937 gen(seed);
-// std::uniform_real_distribution<> dis(0, 1);
-
 o::Mesh readMesh(std::string meshFile, o::Library& lib) {
   (void)lib;
   std::string fn(meshFile);
-  // if there is a forward slash at the end of the filename, remove the forward
-  // slash e.g.  coarseMesh.osh/  ->  coarseMesh.osh
   if (fn.back() == '/') {
     fn.pop_back();
   }
@@ -42,7 +35,6 @@ o::Mesh readMesh(std::string meshFile, o::Library& lib) {
 int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
                                const int numPtcls) {
   auto ne = picparts.mesh()->nelems();
-  // printf("Number of elements: %d\n", ne);
   auto numPpe = numPtcls / ne;
   auto numPpeR = numPtcls % ne;
   o::parallel_for(
@@ -58,11 +50,6 @@ int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
 
 void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
                           random_pool_t random_pool) {
-  // get centroid of parent element and set the child particle coordinates
-  // most of this is copied from Omega_h_overlay.cpp get_cell_center_location
-  // It isn't clear why the template parameter for gather_[verts|vectors] was
-  // sized eight... maybe something to do with the 'Overlay'.  Given that there
-  // are four vertices bounding a tet, I'm setting that parameter to four below.
   o::Mesh* mesh = picparts.mesh();
   int dim = mesh->dim();
   o::LOs cells2nodes;
@@ -76,9 +63,7 @@ void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
   }
   auto nodes2coords = mesh->coords();
   // set particle positions and parent element ids
-  auto x_ps_d = ptcls->get<0>();  // ? I am not quite sure what get does:
-                                  // ? may be gets the position, 1 means the
-                                  // velocity and 2 means the id
+  auto x_ps_d = ptcls->get<0>();
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask > 0) {
       if (dim == 2) {
@@ -102,7 +87,7 @@ void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
         x_ps_d(pid, 2) = center[2];
       } else {
         printf("Error: unsupported dimension\n");
-        // exit(1);
+        OMEGA_H_CHECK(false);
       }
     }
   };
@@ -137,7 +122,6 @@ void pseudo2Dpush(PS* ptcls, double lambda) {
   random_pool_t pool(0);
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
-      // fp_t dir[3];
       double distance = random_path_length(lambda, pool);
       o::Vector<3> cyl_coords = {position_d(pid, 0), position_d(pid, 1),
                                  position_d(pid, 2)};
@@ -205,15 +189,6 @@ void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output) {
       printf("elem_ids[%d] %d ptcl_id:%d\n", pid, elem_ids[pid], ids(pid));
   };
   ps::parallel_for(ptcls, printElmIds);
-
-  // PS::kkLidView ps_elem_ids("ps_elem_ids", ps_capacity);
-  // auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
-  //   if (mask) {
-  //     int new_elem = elem_ids[pid];
-  //     ps_elem_ids(pid) = new_elem;
-  //   }
-  // };
-  // ps::parallel_for(ptcls, lamb);
 
   pumipic::migrate_lb_ptcls(picparts, ptcls, elem_ids, 1.05);
   pumipic::printPtclImb(ptcls);
@@ -356,23 +331,6 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
     };
     parallel_for(ptcls, if_in_same_el, "if_in_same_el");
 
-    // if the particle didn't remain in the same element and didn't
-    // intersect it's an error
-    // if ((!remains_in_el && intersection_distance < 0) ||
-    //    (remains_in_el && intersection_distance > 0)) {
-    //  printf(
-    //      "Error!!!: Particle pid %d didn't remain in the element %d but "
-    //      "didn't intersect\n",
-    //      pid, e);
-    //  printf("Origin     : %.16f, %.16f\n", origin_rThz[0], origin_rThz[2]);
-    //  printf("Destination: %.16f, %.16f\n", dest_rThz[0], dest_rThz[2]);
-    //  printf("Intersection distance: %.16f\n", intersection_distance);
-    //  search_through_mesh(mesh, dest_rThz);
-    //  OMEGA_H_CHECK(false);
-    //}
-
-    // get intersetion edge: if it intersected or didn't remain in the same
-    // element (starts on edge)
     auto update_dest_position =
         PS_LAMBDA(const int& e, const int& pid, const int& mask) {
       if (mask > 0 && ptcl_done[pid] == 0) {
@@ -428,20 +386,16 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
       if (mask > 0 && ptcl_done[pid] == 0) {
         o::Real cur_int_dist = intersection_distance[pid];
         o::LO cur_remain_in_el = remains_in_el[pid];
-        // if (cur_int_dist > 0 && !cur_remain_in_el) {
+
         const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
         const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
             o::gather_vectors<3, 2>(coords, current_el_verts);
         o::Vector<2> dest_rz = {xtgt(pid, 0), xtgt(pid, 2)};
         o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
         o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
-        // get the next element: loop throught the adjaecnt faces current face
-        // and check the bcc of the new position
+
         int n_adj_faces = face2faceOffsets[e + 1] - face2faceOffsets[e];
 
-        // loop thought the faces and check if the bcc in the new position is
-        // all positive
-        // bool found_next_face = false;
         for (int i = 0; i < n_adj_faces; i++) {  // edge adj faces
           int adj_face = face2faceFace[face2faceOffsets[e] + i];
           auto adj_face_verts = o::gather_verts<3>(faces2nodes, adj_face);
@@ -470,10 +424,8 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
         o::Vector<2> dest_rz = {xtgt(pid, 0), xtgt(pid, 2)};
         o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
         o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
-        // get the next element: loop throught the adjaecnt faces current face
-        // and check the bcc of the new position
+
         int n_adj_faces = face2faceOffsets[e + 1] - face2faceOffsets[e];
-        // printf("*");
         for (int node = 0; node < 3; node++) {
           int cur_vert = current_el_verts[node];
           int n_node_adj_face =
@@ -495,43 +447,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                                  : elem_ids_next[pid];  // out of boundary
         ptcl_done[pid] =
             (n_adj_faces < 3 && ptcl_done[pid] == 0) ? 1 : ptcl_done[pid];
-        // if (!found_next_face && n_adj_faces >= 3) {  // lost from inner face
-        //   elem_ids_next[pid] = -1;
-        //   // find all over the mesh
-        //   if (cur_int_dist > 0) {
-        //     printf(
-        //         "It intersected: distance=%.16f but not found in the "
-        //         "adjacent faces\n",
-        //         cur_int_dist);
-        //   }
-        //   if (!cur_remain_in_el) {
-        //     printf(
-        //         "It didn't remain in the element but not found in the "
-        //         "adjacent faces\n");
-        //   }
-        //   printf(
-        //       "Error: Particle pid %d not found anywhere. Lost from "
-        //       "element %d\n",
-        //       pid, e);
-        //   printf("Origin: %.16f %.16f %.16f\n", origin_rThz[0],
-        //          origin_rThz[1], origin_rThz[2]);
-        //   printf("Destination: %.16f %.16f %.16f\n", dest_rThz[0],
-        //          dest_rThz[1], dest_rThz[2]);
-        //   search_through_mesh(mesh, dest_rThz);
-        //   OMEGA_H_CHECK(false);
-        // }  // fails if not found for an inner face
       }  // search node adj faces
-      // if not found and number of adj_faces is less than 3, that means the
-      // partice moved out of the boundary
-      // if (!found_next_face &&
-      //    n_adj_faces < 3) {  // TODO better way to check out of boundary
-      //  elem_ids_next[pid] = -1;  // out of boundary
-      //}
-      //// done with the particle
-      // ptcl_done[pid] = 1;
-
-      //}  // if intersected or not in the same element
-      //}  // if mask
     };  // find_next_element lambda
     parallel_for(ptcls, find_next_element_in_node_adj_faces,
                  "find_next_element_in_node_adj_faces");
