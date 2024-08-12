@@ -18,15 +18,6 @@ Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
 // std::mt19937 gen(seed);
 // std::uniform_real_distribution<> dis(0, 1);
 
-OMEGA_H_DEVICE double random_path_length(double lambda, random_pool_t pool) {
-  // ref:
-  // https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
-  auto gen = pool.get_state();
-  double rn = gen.drand(0., 1.);
-  double l = -std::log(rn) * lambda;
-  return l;
-}
-
 o::Mesh readMesh(std::string meshFile, o::Library& lib) {
   (void)lib;
   std::string fn(meshFile);
@@ -65,12 +56,6 @@ int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
   return totPtcls;
 }
 
-// HACK to avoid having an unguarded comma in the PS PARALLEL macro
-OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
-                                             o::Few<o::LO, 4> v) {
-  return o::gather_vectors<4, 3>(a, v);
-}
-
 void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
                           random_pool_t random_pool) {
   // get centroid of parent element and set the child particle coordinates
@@ -103,6 +88,7 @@ void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
         auto gen = random_pool.get_state();
         double rn = gen.drand(-1., 1.);
         double random_theta = rn * M_PI;
+        random_pool.free_state(gen);
         // r, theta, z
         x_ps_d(pid, 0) = center[0];
         x_ps_d(pid, 1) = random_theta;
@@ -196,32 +182,6 @@ void push(PS* ptcls, int np, double lambda) {
   printTiming("ps push", totTime);
 }
 
-OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
-                                                  random_pool_t random_pool) {
-  // ref
-  // https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
-  // ref
-  // std::random_device rd;
-  // std::mt19937 gen(0);
-  // std::uniform_real_distribution<> dis(0, 1);
-  auto gen = random_pool.get_state();
-  double rn = gen.drand(0., 1.);
-  double rn2 = gen.drand(0., 1.);
-  double mu = 2 * rn - 1;
-  // cosine in the particles incident direction
-  double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
-  // cosine with the plane of the collision
-  double nu_lab = 2 * rn2 - 1;
-  o::Vector<3> dir;
-
-  // TODO: replace this dummy direction with the actual direction
-  // actual direction needs the incident direction
-  dir[0] = std::sqrt(1 - mu_lab * mu_lab) * std::cos(2 * M_PI * nu_lab);
-  dir[1] = std::sqrt(1 - mu_lab * mu_lab) * std::sin(2 * M_PI * nu_lab);
-  dir[2] = mu_lab;
-  return dir;
-}
-
 void updatePtclPositions(PS* ptcls) {
   auto x_ps_d = ptcls->get<0>();
   auto xtgt_ps_d = ptcls->get<1>();
@@ -271,104 +231,6 @@ void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output) {
                ids(pid));
     };
     ps::parallel_for(ptcls, printElms);
-  }
-}
-
-template <class Vec>
-OMEGA_H_DEVICE bool all_positive(const Vec a, Omega_h::Real tol = EPSILON) {
-  auto isPos = 1;
-  for (Omega_h::LO i = 0; i < a.size(); ++i) {
-    const auto gtez = Omega_h::are_close(a[i], 0.0, tol, tol) || a[i] > 0;
-    isPos = isPos && gtez;
-  }
-  return isPos;
-}
-
-OMEGA_H_DEVICE bool counter_clockwise(const Omega_h::Vector<2>& a,
-                                      const Omega_h::Vector<2>& b,
-                                      const Omega_h::Vector<2>& c) {
-  return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
-}
-
-OMEGA_H_DEVICE IntersectionResult find_intersection_point(
-    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2) {
-  IntersectionResult result;
-  auto b = line2[0] - line1[0];
-  o::Matrix<2, 2> A;
-  A[0] = line1[1] - line1[0];
-  A[1] = line2[0] - line2[1];
-  // A = o::transpose(A);
-  //  print the matrix
-  // printf("Matrix A: \n");
-  // for (int i = 0; i < 2; i++){
-  //   for (int j = 0; j < 2; j++){
-  //     printf("%f ", A[i][j]);
-  //   }
-  //   printf("\n");
-  // }
-  auto det = o::determinant(A);
-  if (std::abs(det) < EPSILON) {
-    result.exists = false;
-  }
-  o::Vector<2> x = o::invert(A) * b;
-  // if intersects near the origin, return the origin
-  if (x[0] > -EPSILON && x[0] < 0) {  // todo not the best way to handle this
-    result.exists = true;
-    result.point = line1[0];
-  }
-  if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
-    result.exists = false;
-  }
-  o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
-  result.exists = true;
-  result.point = intersection_point;
-  return result;
-}
-
-OMEGA_H_DEVICE double distance_between_points(o::Vector<2> p1,
-                                              o::Vector<2> p2) {
-  return o::norm(p1 - p2);
-}
-
-/// ref: https://bryceboe.com/2006/10/23/line-segment-intersection-algorithm/
-OMEGA_H_DEVICE double find_intersection_distance_tri(
-    const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
-    const o::Few<o::Vector<2>, 2>& tri_edge) {
-  // test_intersection();
-  IntersectionResult intersection_point_struct =
-      find_intersection_point(start_dest, tri_edge);
-  if (intersection_point_struct.exists) {
-    auto intersection_point = intersection_point_struct.point;
-    return distance_between_points(start_dest[0], intersection_point);
-  } else {
-    return -1.0;
-  }
-}
-
-OMEGA_H_DEVICE void search_through_mesh(const o::Mesh& mesh, o::Vector<3> x) {
-  o::Vector<2> x_rz = {x[0], x[2]};
-  auto coords = mesh.coords();
-  auto n_faces = mesh.nfaces();
-  auto face2nodes = mesh.get_adj(o::FACE, o::VERT).ab2b;
-  bool found = false;
-  for (int i = 0; i < n_faces; i++) {
-    auto face_nodes = o::gather_verts<3>(face2nodes, i);
-    Omega_h::Few<Omega_h::Vector<2>, 3> face_coords;
-    face_coords = o::gather_vectors<3, 2>(coords, face_nodes);
-    auto bcc = o::barycentric_from_global<2, 2>(x_rz, face_coords);
-    if (all_positive(bcc)) {
-      found = true;
-      printf("Found the particle in element: %d\n", i);
-      printf("Barycentric coordinates: %f, %f, %f\n", bcc[0], bcc[1], bcc[2]);
-      printf("Coordinates of the face: \n");
-      for (int j = 0; j < 3; j++) {
-        printf("%.16f, %.16f\n", face_coords[j][0], face_coords[j][1]);
-      }
-      printf("Position of the particle was: %.16f, %.16f\n", x_rz[0], x_rz[1]);
-    }
-  }
-  if (!found) {
-    printf("Particle not found in the mesh\n");
   }
 }
 
@@ -897,35 +759,39 @@ void prettyPrintBB(T min, T max) {
   printf("(%8.4f, %8.4f)\t---------------------|\n", min[0], min[1]);
 }
 
-OMEGA_H_DEVICE void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
-                                     const o::Reals& nodes2coords,
-                                     o::Few<o::Real, 3>& center) {
-  auto cell_nodes2nodes = o::gather_verts<4>(cells2nodes, o::LO(e));
-  auto cell_nodes2coords = gatherVectors(nodes2coords, cell_nodes2nodes);
-  center = average(cell_nodes2coords);
-}
-
-OMEGA_H_DEVICE void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
-                                     const o::Reals& nodes2coords,
-                                     o::Few<o::Real, 2>& center) {
-  auto cell_nodes2nodes = o::gather_verts<3>(cells2nodes, o::LO(e));
-  auto cell_nodes2coords =
-      o::gather_vectors<3, 2>(nodes2coords, cell_nodes2nodes);
-  center = average(cell_nodes2coords);
-}
-
-OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
-                                          o::Vector<3>& cartesian) {
-  OMEGA_H_CHECK(cyl.size() == 3);
-
-  cartesian[0] = cyl[0] * std::cos(cyl[1]);
-  cartesian[1] = cyl[0] * std::sin(cyl[1]);
-  cartesian[2] = cyl[2];
-}
-
-OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3> cartesian,
-                                          o::Vector<3>& cyl) {
-  cyl[0] = std::sqrt(cartesian[0] * cartesian[0] + cartesian[1] * cartesian[1]);
-  cyl[1] = std::atan2(cartesian[1], cartesian[0]);
-  cyl[2] = cartesian[2];
+void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls) {
+  o::Mesh* mesh = picparts.mesh();
+  // create an array to store the number of particles in each element
+  o::Write<o::LO> elmPtclCnt_w(mesh->nelems(), 0);
+  // parallel loop over elements and particles
+  auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+    if (mask > 0) {
+      Kokkos::atomic_fetch_add(&(elmPtclCnt_w[e]), 1);
+    }
+  };
+  ps::parallel_for(ptcls, lamb);
+  o::Write<o::Real> epc_w(mesh->nelems(), 0);
+  const auto convert = OMEGA_H_LAMBDA(o::LO i) {
+    epc_w[i] = static_cast<o::Real>(elmPtclCnt_w[i]);
+  };
+  o::parallel_for(mesh->nelems(), convert, "convert_to_real");
+  o::Reals epc(epc_w);
+  mesh->add_tag(o::FACE, "element_particle_count", 1, o::Reals(epc));
+  // get the list of elements adjacent to each vertex
+  auto verts2elems = mesh->ask_up(o::VERT, picparts.dim());
+  // create a device writeable array to store the computed density
+  o::Write<o::Real> ad_w(mesh->nverts(), 0);
+  const auto accumulate = OMEGA_H_LAMBDA(o::LO i) {
+    const auto deg = verts2elems.a2ab[i + 1] - verts2elems.a2ab[i];
+    const auto firstElm = verts2elems.a2ab[i];
+    o::Real vertVal = 0.00;
+    for (int j = 0; j < deg; j++) {
+      const auto elm = verts2elems.ab2b[firstElm + j];
+      vertVal += epc[elm];
+    }
+    ad_w[i] = vertVal / deg;
+  };
+  o::parallel_for(mesh->nverts(), accumulate, "calculate_avg_density");
+  o::Read<o::Real> ad_r(ad_w);
+  mesh->set_tag(o::VERT, "avg_density", ad_r);
 }

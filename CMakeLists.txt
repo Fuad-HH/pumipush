@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(pumipush LANGUAGES CXX)
+project(pumipush LANGUAGES CXX CUDA)
 enable_testing()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
   add_definitions(-DDEBUG)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -G")
 endif()
 
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
@@ -15,6 +16,8 @@ find_package(pumipic REQUIRED)
 find_package(Omega_h REQUIRED)
 find_package(redev REQUIRED)
 find_package(MPI REQUIRED)
+find_package(CUDA REQUIRED)
+
 
 #add_executable(pumipush pumipush.cpp)
 add_executable(pseudoMC pseudoMC.cpp pumipush.cpp)

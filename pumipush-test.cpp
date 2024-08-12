@@ -17,10 +17,10 @@ bool is_close(double a, double b, double tol = 1e-5) {
 }
 template <typename T>
 bool match_with_expected(T min, T max, T expected_min, T expected_max);
-void varify7k3d(o::Library* lib);
-void verifyCorseWestcase(o::Library* lib);
+void bbox_varification_7k(o::Library* lib);
+void bbox_verification_coarseWest(o::Library* lib);
 void checkCPNFileReading(o::Library* lib);
-void check2dBox(o::Library* lib);
+void bbox_varification_2dBox(o::Library* lib);
 void check_cyl2cart();
 void test_intersection();
 void test_on_edge_origin_case();
@@ -30,16 +30,16 @@ int main(int argc, char** argv) {
   test_intersection();
   auto lib = o::Library(&argc, &argv);
   OMEGA_H_CHECK(std::string(lib.version()) == OMEGA_H_SEMVER);
-  varify7k3d(&lib);
-  verifyCorseWestcase(&lib);
+  bbox_varification_7k(&lib);
+  bbox_verification_coarseWest(&lib);
   checkCPNFileReading(&lib);
-  check2dBox(&lib);
+  bbox_varification_2dBox(&lib);
   check_cyl2cart();
 }
 
 void check_is_inside_tet() {}
 
-void varify7k3d(o::Library* lib) {
+void bbox_varification_7k(o::Library* lib) {
   o::Vector<2> min, max;
   Omega_h::Mesh mesh7kcube(lib);
   Omega_h::binary::read("assets/7k.osh", lib->world(), &mesh7kcube);
@@ -53,7 +53,7 @@ void varify7k3d(o::Library* lib) {
       match_with_expected(min, max, expected_min_7k, expected_max_7k));
 }
 
-void verifyCorseWestcase(o::Library* lib) {
+void bbox_verification_coarseWest(o::Library* lib) {
   o::Vector<2> min, max;
   Omega_h::Mesh meshwestcoarse(lib);
   Omega_h::binary::read("assets/coarseWestLCPP.osh", lib->world(),
@@ -81,7 +81,7 @@ void checkCPNFileReading(o::Library* lib) {
   }
 }
 
-void check2dBox(o::Library* lib) {
+void bbox_varification_2dBox(o::Library* lib) {
   o::Vector<2> min, max;
   // 2d case
   Omega_h::Mesh mesh2d(lib);
@@ -161,53 +161,6 @@ void cart2cyl() {
   OMEGA_H_CHECK(is_close(cyl[1], -o::PI / 2));
   OMEGA_H_CHECK(is_close(cyl[2], 5));
 }
-std::optional<o::Vector<2>> find_intersection_point(
-    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2) {
-  auto b = line2[0] - line1[0];
-  o::Matrix<2, 2> A;
-  A[0] = line1[1] - line1[0];
-  A[1] = line2[0] - line2[1];
-  // A = o::transpose(A);
-  //  print the matrix
-  // printf("Matrix A: \n");
-  // for (int i = 0; i < 2; i++){
-  //   for (int j = 0; j < 2; j++){
-  //     printf("%f ", A[i][j]);
-  //   }
-  //   printf("\n");
-  // }
-  auto det = o::determinant(A);
-  if (std::abs(det) < EPSILON) {
-    return {};
-  }
-  o::Vector<2> x = o::invert(A) * b;
-  // if intersects near the origin, return the origin
-  if (x[0] > -1e-6 && x[0] < 0) {  // todo not the best way to handle this
-    printf("Origin on the edge\n");
-    return line1[0];
-  }
-  if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
-    return {};
-  }
-  o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
-  return intersection_point;
-}
-
-double distance_between_points(o::Vector<2> p1, o::Vector<2> p2) {
-  return o::norm(p1 - p2);
-}
-
-/// ref: https://bryceboe.com/2006/10/23/line-segment-intersection-algorithm/
-double find_intersection_distance_tri(
-    const Omega_h::Few<Omega_h::Vector<2>, 2>& start_dest,
-    const o::Few<o::Vector<2>, 2>& tri_edge) {
-  // test_intersection();
-  if (auto intersection_point = find_intersection_point(start_dest, tri_edge)) {
-    return distance_between_points(start_dest[0], intersection_point.value());
-  } else {
-    return -1.0;
-  }
-}
 void test_on_edge_origin_case() {
   printf("Test: origin on edge...\n");
   o::Few<o::Vector<2>, 2> edge = {{2.6217217103259052, 0.2984345434763631},
@@ -215,7 +168,7 @@ void test_on_edge_origin_case() {
   o::Few<o::Vector<2>, 2> ray = {{2.6231560255680102, 0.2971300081293064},
                                  {2.6228101864056441, 0.2980303188213828}};
   auto intersection_point = find_intersection_point(ray, edge);
-  OMEGA_H_CHECK(intersection_point.has_value());
+  OMEGA_H_CHECK(intersection_point.exists);
   double intersection_distance = find_intersection_distance_tri(ray, edge);
   OMEGA_H_CHECK(std::abs(intersection_distance - 0.000000) < 1.0e-6);
 }
@@ -223,7 +176,7 @@ void test_intersection() {
   o::Few<o::Vector<2>, 2> line1 = {{-1, 0.5}, {1, 0.5}};
   o::Few<o::Vector<2>, 2> line2 = {{0, 1}, {0, 2}};
   auto intersection_point = find_intersection_point(line1, line2);
-  OMEGA_H_CHECK(!intersection_point.has_value());
+  OMEGA_H_CHECK(!intersection_point.exists);
   double dist = distance_between_points(line1[0], line1[1]);
   OMEGA_H_CHECK(is_close(dist, 2.0));
   dist = distance_between_points(line2[0], line2[1]);
@@ -239,16 +192,16 @@ void test_intersection() {
 
   intersection_point = find_intersection_point(line1, line2);
   o::Vector<2> expected_intersection_point = {0.95, 1.25};
-  OMEGA_H_CHECK(intersection_point.has_value());
+  OMEGA_H_CHECK(intersection_point.exists);
   // print the intersection point
   // printf("Intersection point: %f %f\n", intersection_point.value()[0],
   // intersection_point.value()[1]);
-  OMEGA_H_CHECK(o::are_close(intersection_point.value(),
+  OMEGA_H_CHECK(o::are_close(intersection_point.point,
                              expected_intersection_point, 1.0e-10));
-  printf("Intersection point: %f %f\n", intersection_point.value()[0],
-         intersection_point.value()[1]);
+  printf("Intersection point: %f %f\n", intersection_point.point[0],
+         intersection_point.point[1]);
   double distance = find_intersection_distance_tri(line1, line2);
-  dist = distance_between_points(line1[0], intersection_point.value());
+  dist = distance_between_points(line1[0], intersection_point.point);
   printf("Distance - direct: %f\n", distance);
 
   printf("Distance: %f\n", distance);

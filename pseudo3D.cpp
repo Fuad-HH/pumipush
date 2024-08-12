@@ -127,6 +127,11 @@ int main(int argc, char* argv[]) {
   mesh->add_tag(o::VERT, "avg_density", 1, o::Reals(mesh->nverts(), 0));
   render(picparts, 0, comm_rank);
 
+  {
+    computeAvgPtclDensity(picparts, ptcls);
+    render(picparts, 0, comm_rank);
+  }
+
   Kokkos::Timer timer;
   Kokkos::Timer fullTimer;
 
@@ -169,10 +174,10 @@ int main(int argc, char* argv[]) {
     }
     // 4. tag the parent elements
     tagParentElements(picparts, ptcls, iter);
+    computeAvgPtclDensity(picparts, ptcls);
     render(picparts, iter, comm_rank);
   }
 
-  Omega_h::vtk::write_parallel("pseudoMC_vtk", mesh, picparts.dim());
   if (comm_rank == 0)
     fprintf(stderr, "%d iterations of pseudopush (seconds) %f\n", iter,
             fullTimer.seconds());
