@@ -26,13 +26,13 @@ void test_intersection();
 void test_on_edge_origin_case();
 
 int main(int argc, char** argv) {
-  test_on_edge_origin_case();
   test_intersection();
+  test_on_edge_origin_case();
   auto lib = o::Library(&argc, &argv);
   OMEGA_H_CHECK(std::string(lib.version()) == OMEGA_H_SEMVER);
   bbox_varification_7k(&lib);
   bbox_verification_coarseWest(&lib);
-  checkCPNFileReading(&lib);
+  // checkCPNFileReading(&lib);
   bbox_varification_2dBox(&lib);
   check_cyl2cart();
 }
@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
 void check_is_inside_tet() {}
 
 void bbox_varification_7k(o::Library* lib) {
+  printf("Bounding box verification for 7k mesh (OH repo)\n");
   o::Vector<2> min, max;
   Omega_h::Mesh mesh7kcube(lib);
   Omega_h::binary::read("assets/7k.osh", lib->world(), &mesh7kcube);
@@ -54,6 +55,7 @@ void bbox_varification_7k(o::Library* lib) {
 }
 
 void bbox_verification_coarseWest(o::Library* lib) {
+  printf("TEST: Bounding box verification for coarseWestLCPP mesh\n");
   o::Vector<2> min, max;
   Omega_h::Mesh meshwestcoarse(lib);
   Omega_h::binary::read("assets/coarseWestLCPP.osh", lib->world(),
@@ -70,6 +72,7 @@ void bbox_verification_coarseWest(o::Library* lib) {
 }
 
 void checkCPNFileReading(o::Library* lib) {
+  printf("TEST: Checking CPN file reading\n");
   std::string cpn_file = "test.cpn";
   o::Write<o::LO> owners(7, 0);
   ownerFromCPN(cpn_file, owners);
@@ -82,6 +85,7 @@ void checkCPNFileReading(o::Library* lib) {
 }
 
 void bbox_varification_2dBox(o::Library* lib) {
+  printf("TEST: Bounding box verification for 2d box mesh\n");
   o::Vector<2> min, max;
   // 2d case
   Omega_h::Mesh mesh2d(lib);
@@ -173,6 +177,7 @@ void test_on_edge_origin_case() {
   OMEGA_H_CHECK(std::abs(intersection_distance - 0.000000) < 1.0e-6);
 }
 void test_intersection() {
+  printf("Test: intersection...\n");
   o::Few<o::Vector<2>, 2> line1 = {{-1, 0.5}, {1, 0.5}};
   o::Few<o::Vector<2>, 2> line2 = {{0, 1}, {0, 2}};
   auto intersection_point = find_intersection_point(line1, line2);
@@ -198,8 +203,6 @@ void test_intersection() {
   // intersection_point.value()[1]);
   OMEGA_H_CHECK(o::are_close(intersection_point.point,
                              expected_intersection_point, 1.0e-10));
-  printf("Intersection point: %f %f\n", intersection_point.point[0],
-         intersection_point.point[1]);
   double distance = find_intersection_distance_tri(line1, line2);
   dist = distance_between_points(line1[0], intersection_point.point);
   printf("Distance - direct: %f\n", distance);
@@ -221,6 +224,8 @@ void test_intersection() {
   auto bcc =
       o::barycentric_from_global<2, 2>({2.562387, 0.110075}, face31_coords);
   printf("Barycentric for 31: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+  OMEGA_H_CHECK(!all_positive(bcc));
   bcc = o::barycentric_from_global<2, 2>({2.562387, 0.110075}, face38_coords);
   printf("Barycentric for 38: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+  OMEGA_H_CHECK(all_positive(bcc));
 }

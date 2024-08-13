@@ -64,8 +64,8 @@ typedef Kokkos::Random_XorShift64_Pool<Kokkos::DefaultExecutionSpace>
     random_pool_t;
 
 struct IntersectionResult {
-  bool exists;
-  o::Vector<2> point;
+  bool exists = false;
+  o::Vector<2> point = o::Vector<2>{0.0, 0.0};
 };
 // ******************** Function Prototypes ******************** //
 Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
@@ -259,21 +259,21 @@ OMEGA_H_DEVICE IntersectionResult find_intersection_point(
   //   printf("\n");
   // }
   auto det = o::determinant(A);
-  if (std::abs(det) < EPSILON) {
-    result.exists = false;
-  }
+  bool valid_det = (std::abs(det) > EPSILON);
   o::Vector<2> x = o::invert(A) * b;
   // if intersects near the origin, return the origin
-  if (x[0] > -EPSILON && x[0] < 0) {  // todo not the best way to handle this
-    result.exists = true;
-    result.point = line1[0];
-  }
-  if (x[0] < 0 || x[0] > 1 || x[1] < 0 || x[1] > 1) {
-    result.exists = false;
-  }
+  bool on_origin =
+      (x[0] > -EPSILON * 100 && x[0] < 0 && valid_det);  // TODO: magic number
+  result.exists = on_origin ? true : result.exists;
+  result.point = on_origin ? line1[0] : result.point;
+
+  bool intersects = (x[0] >= 0 && x[0] <= 1 && x[1] >= 0 && x[1] <= 1);
+
   o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
-  result.exists = true;
-  result.point = intersection_point;
+  result.exists =
+      (intersects && !on_origin && valid_det) ? true : result.exists;
+  result.point = (intersects && !on_origin && valid_det) ? intersection_point
+                                                         : result.point;
   return result;
 }
 
