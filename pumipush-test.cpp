@@ -24,6 +24,7 @@ void bbox_varification_2dBox(o::Library* lib);
 void check_cyl2cart();
 void test_intersection();
 void test_on_edge_origin_case();
+void test_move_particle_accross_element_boundary();
 
 int main(int argc, char** argv) {
   test_intersection();
@@ -35,6 +36,7 @@ int main(int argc, char** argv) {
   // checkCPNFileReading(&lib);
   bbox_varification_2dBox(&lib);
   check_cyl2cart();
+  test_move_particle_accross_element_boundary();
 }
 
 void check_is_inside_tet() {}
@@ -228,4 +230,39 @@ void test_intersection() {
   bcc = o::barycentric_from_global<2, 2>({2.562387, 0.110075}, face38_coords);
   printf("Barycentric for 38: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
   OMEGA_H_CHECK(all_positive(bcc));
+
+  // gpu intersection case
+  line1 = {{2.6220084679273516, 0.4999999999986200},
+           {73.7249693813762264, 71.5342561928560059}};
+  line2 = {{3.0000000000000000, -0.0000000000055056},
+           {3.0000000000000000, 0.9999999999972258}};
+  distance = find_intersection_distance_tri(line1, line2);
+  o::Real expected_distance = 0.534303;
+  OMEGA_H_CHECK(std::abs(distance - expected_distance) < 1.0e-6);
+}
+
+void test_move_particle_accross_element_boundary() {
+  int pid = 0;
+  o::Vector<3> origin_rThz{2.6220084679273516, 2.0175472867126008,
+                           0.4999999999986200};
+  o::Vector<3> dest_rThz{73.7249693813762264, 1.3969918345852945,
+                         71.5342561928560059};
+  o::Vector<3> edgevert1{3.0000000000000000, -0.0000000000055056};
+  o::Vector<3> edgevert2{3.0000000000000000, 0.9999999999972258};
+
+  o::Few<o::Vector<2>, 2> ray{{origin_rThz[0], origin_rThz[2]},
+                              {dest_rThz[0], dest_rThz[2]}};
+  o::Few<o::Vector<2>, 2> edge{{edgevert1[0], edgevert1[1]},
+                               {edgevert2[0], edgevert2[1]}};
+
+  auto intersection_point = find_intersection_point(ray, edge);
+  OMEGA_H_CHECK(intersection_point.exists);
+  OMEGA_H_CHECK(std::abs(intersection_point.point[0] - 3.0) < 1.0e-6);
+  o::Real dt_c = find_intersection_distance_tri(ray, edge);
+  o::Real dt = 0.534303;
+  OMEGA_H_CHECK(std::abs(dt - dt_c) < 1.0e-6);
+  // o::Vector<3> new_rThz = move_particle_accross_boundary(pid, origin_rThz,
+  // dest_rThz, dt_c); o::Vector<2> expected_rz = intersection_point.point;
+  // OMEGA_H_CHECK(o::are_close({new_rThz[0], new_rThz[2]},
+  // expected_rz, 1.0e-6));
 }

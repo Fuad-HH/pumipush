@@ -249,25 +249,16 @@ OMEGA_H_DEVICE IntersectionResult find_intersection_point(
   o::Matrix<2, 2> A;
   A[0] = line1[1] - line1[0];
   A[1] = line2[0] - line2[1];
-  // A = o::transpose(A);
-  //  print the matrix
-  // printf("Matrix A: \n");
-  // for (int i = 0; i < 2; i++){
-  //   for (int j = 0; j < 2; j++){
-  //     printf("%f ", A[i][j]);
-  //   }
-  //   printf("\n");
-  // }
+
   auto det = o::determinant(A);
   bool valid_det = (std::abs(det) > EPSILON);
   o::Vector<2> x = o::invert(A) * b;
   // if intersects near the origin, return the origin
-  bool on_origin =
-      (x[0] > -EPSILON * 100 && x[0] < 0 && valid_det);  // TODO: magic number
-  result.exists = on_origin ? true : result.exists;
-  result.point = on_origin ? line1[0] : result.point;
+  bool on_origin = (x[0] > -EPSILON && x[0] < EPSILON && valid_det);
+  result.exists = on_origin ? false : result.exists;
+  // result.point = on_origin ? line1[0] : result.point;
 
-  bool intersects = (x[0] >= 0 && x[0] <= 1 && x[1] >= 0 && x[1] <= 1);
+  bool intersects = (x[0] > 0.0 && x[0] <= 1 && x[1] > 0.0 && x[1] <= 1);
 
   o::Vector<2> intersection_point = (1 - x[0]) * line1[0] + x[0] * line1[1];
   result.exists =
@@ -357,6 +348,80 @@ OMEGA_H_DEVICE double random_path_length(double lambda, random_pool_t pool) {
   pool.free_state(gen);
   double l = -std::log(rn) * lambda;
   return l;
+}
+/*
+OMEGA_H_DEVICE o::Vector<3> move_particle_accross_boundary(int pid, const
+o::Vector<3>& origin_rThz, const o::Vector<3>& dest_rThz, o::Real cur_int_dist)
+{ o::Vector<3> dest_xyz; cylindrical2cartesian(dest_rThz, dest_xyz);
+    o::Vector<3> origin_xyz;
+    cylindrical2cartesian(origin_rThz, origin_xyz);
+    o::Vector<3> modified_rThz;
+
+    // it's the new position but with the same theta
+    o::Vector<3> dest_rThz_Th_plane = {dest_rThz[0], origin_rThz[1],
+dest_rThz[2]}; o::Vector<3> dest_xyz_Th_plane;
+    cylindrical2cartesian(dest_rThz_Th_plane, dest_xyz_Th_plane);
+
+    o::Vector<3> direction_xyz = (dest_xyz - origin_xyz) / o::norm(dest_xyz -
+origin_xyz);
+    //printf("INFO: Particle %d direction: %.16f %.16f %.16f\n", pid,
+direction_xyz[0], direction_xyz[1], direction_xyz[2]);
+
+#ifdef DEBUG
+    OMEGA_H_CHECK(std::abs(o::norm(direction_xyz) - 1.0) < EPSILON);
+#endif
+
+    o::Vector<3> direction_Th_plane = (dest_xyz_Th_plane - origin_xyz) /
+o::norm(dest_xyz_Th_plane - origin_xyz);
+    //printf("INFO: Particle %d direction in Th plane: %.16f %.16f %.16f\n",
+pid, direction_Th_plane[0], direction_Th_plane[1], direction_Th_plane[2]);
+
+#ifdef DEBUG
+    OMEGA_H_CHECK(std::abs(o::norm(direction_Th_plane) - 1.0) < EPSILON);
+#endif
+
+    o::Real dot_product = o::inner_product(direction_xyz, direction_Th_plane);
+    printf("INFO: Particle %d dot product: %.16f\n", pid, dot_product);
+#ifdef DEBUG
+    OMEGA_H_CHECK(std::abs(dot_product) < 1.0);
+#endif
+
+    o::Real intersection_distance_xyz = cur_int_dist / dot_product;
+    printf("INFO: Particle %d intersection distance in xyz: %f\n", pid,
+intersection_distance_xyz);
+
+    dest_xyz = origin_xyz + (direction_xyz * intersection_distance_xyz);
+    cartesian2cylindrical(dest_xyz, modified_rThz);
+
+    //o::Vector<3> direction_rThz = (dest_rThz - origin_rThz) /
+o::norm(dest_rThz - origin_rThz);
+    //modified_rThz[0] = origin_rThz[0] + direction_rThz[0] * cur_int_dist;
+    //modified_rThz[2] = origin_rThz[2] + direction_rThz[2] * cur_int_dist;
+
+    //o::Real del_theta = dest_rThz[1] - origin_rThz[1];
+    //o::Real r_fraction = (modified_rThz[0] - origin_rThz[0]) / (dest_rThz[0] -
+origin_rThz[0]);
+    //modified_rThz[1] = origin_rThz[1] + del_theta * r_fraction;
+    printf("INFO: Particle %d updated destination position: %.16f %.16f
+%.16f\n", pid, modified_rThz[0], modified_rThz[1], modified_rThz[2]);
+
+    return modified_rThz;
+}
+*/
+
+OMEGA_H_DEVICE o::Real get_dest_theta(const o::Vector<3>& origin_rThz,
+                                      const o::Vector<3>& dest_rThz) {
+  o::Vector<3> dest_xyz;
+  cylindrical2cartesian(dest_rThz, dest_xyz);
+  o::Vector<3> origin_xyz;
+  cylindrical2cartesian(origin_rThz, origin_xyz);
+  o::Vector<3> modified_rThz;
+
+  o::Vector<3> direction_xyz =
+      (dest_xyz - origin_xyz) / o::norm(dest_xyz - origin_xyz);
+  o::Real theta = Kokkos::atan2(direction_xyz[0], direction_xyz[1]);
+
+  return theta;
 }
 
 #endif

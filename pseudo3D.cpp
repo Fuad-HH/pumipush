@@ -178,9 +178,10 @@ int main(int argc, char* argv[]) {
     render(picparts, iter, comm_rank);
   }
 
-  if (comm_rank == 0)
-    fprintf(stderr, "%d iterations of pseudopush (seconds) %f\n", iter,
+  if (comm_rank == 0) {
+    fprintf(stderr, "%d iterations of pseudopush (seconds) %f\n", iter - 1,
             fullTimer.seconds());
+  }
 
   // cleanup
   delete ptcls;
