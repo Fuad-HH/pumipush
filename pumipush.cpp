@@ -123,7 +123,7 @@ void pseudo2Dpush(PS* ptcls, double lambda) {
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
       double distance = random_path_length(lambda, pool);
-      printf("Push distance for particle %d: %f\n", pid, distance);
+      // printf("Push distance for particle %d: %f\n", pid, distance);
       o::Vector<3> cyl_coords = {position_d(pid, 0), position_d(pid, 1),
                                  position_d(pid, 2)};
       o::Vector<3> cart_coords;
@@ -132,10 +132,10 @@ void pseudo2Dpush(PS* ptcls, double lambda) {
       o::Vector<3> direction_vec = sampleRandomDirection(1, pool);
       o::Vector<3> new_position_cart = cart_coords + (distance * direction_vec);
       cartesian2cylindrical(new_position_cart, cyl_coords);
-      printf("INFO: Old position: %.16f %.16f %.16f\n", position_d(pid, 0),
-             position_d(pid, 1), position_d(pid, 2));
-      printf("INFO: New position: %.16f %.16f %.16f\n", cyl_coords[0],
-             cyl_coords[1], cyl_coords[2]);
+      // printf("INFO: Old position: %.16f %.16f %.16f\n", position_d(pid, 0),
+      //        position_d(pid, 1), position_d(pid, 2));
+      // printf("INFO: New position: %.16f %.16f %.16f\n", cyl_coords[0],
+      //        cyl_coords[1], cyl_coords[2]);
       new_position_d(pid, 0) = cyl_coords[0];
       new_position_d(pid, 1) = cyl_coords[1];
       new_position_d(pid, 2) = cyl_coords[2];
@@ -612,7 +612,7 @@ bool search_adjacency_with_bcc(
   auto fill = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask > 0) {
       elem_ids[pid] = e;
-      printf("INFO: Particle %d is in element %d\n", pid, e);
+      // printf("INFO: Particle %d is in element %d\n", pid, e);
     } else {
       ptcl_done[pid] = 1;
     }
@@ -631,9 +631,9 @@ bool search_adjacency_with_bcc(
         // get the corners of the element
         o::Vector<3> dest_rThz = {xtgt(pid, 0), xtgt(pid, 1), xtgt(pid, 2)};
         const o::Vector<3> origin_rThz = {x(pid, 0), x(pid, 1), x(pid, 2)};
-        printf("INFO: Checking particle %d in element %d\n", pid, elmId);
-        printf("INFO: Origin position: %.16f %.16f %.16f\n", origin_rThz[0],
-               origin_rThz[1], origin_rThz[2]);
+        // printf("INFO: Checking particle %d in element %d\n", pid, elmId);
+        // printf("INFO: Origin position: %.16f %.16f %.16f\n", origin_rThz[0],
+        //        origin_rThz[1], origin_rThz[2]);
         const auto current_el_verts = o::gather_verts<3>(faces2nodes, e);
         const Omega_h::Few<Omega_h::Vector<2>, 3> current_el_vert_coords =
             o::gather_vectors<3, 2>(coords, current_el_verts);
@@ -656,14 +656,14 @@ bool search_adjacency_with_bcc(
           OMEGA_H_CHECK(false);
         }
         // check remains in the element
-        bcc = o::barycentric_from_global<2, 2>({dest_rThz[0], dest_rThz[2]},
-                                               current_el_vert_coords);
-        if (all_positive(bcc, 0.0)) {
-          printf("INFO: Particle %d remains in element %d\n", pid, elmId);
-        } else {
-          printf("INFO: Particle %d does not remain in element %d\n", pid,
-                 elmId);
-        }
+        // bcc = o::barycentric_from_global<2, 2>({dest_rThz[0], dest_rThz[2]},
+        //                                       current_el_vert_coords);
+        // if (all_positive(bcc, 0.0)) {
+        //  printf("INFO: Particle %d remains in element %d\n", pid, elmId);
+        //} else {
+        //  printf("INFO: Particle %d does not remain in element %d\n", pid,
+        //         elmId);
+        //}
         // remains_in_el[pid] = int(all_positive(bcc,0.0));
       }
     };
@@ -694,8 +694,8 @@ bool search_adjacency_with_bcc(
             o::barycentric_from_global<2, 2>(dest_rz, current_el_vert_coords);
         auto bcc_origin =
             o::barycentric_from_global<2, 2>(origin_rz, current_el_vert_coords);
-        printf("INFO: BCC origin: %.16f %.16f %.16f\n", bcc_origin[0],
-               bcc_origin[1], bcc_origin[2]);
+        // printf("INFO: BCC origin: %.16f %.16f %.16f\n", bcc_origin[0],
+        //        bcc_origin[1], bcc_origin[2]);
         {
           // check that origin only stands on one edge at most: not on corner
           o::LO n_edges = 0;
@@ -716,20 +716,21 @@ bool search_adjacency_with_bcc(
           o::Few<o::Vector<2>, 2> edge_coords = {
               o::get_vector<2>(coords, edge_verts[0]),
               o::get_vector<2>(coords, edge_verts[1])};
-          printf("Edge %d ends: (%.16f %.16f), (%.16f, %.16f)\n", edge,
-                 edge_coords[0][0], edge_coords[0][1], edge_coords[1][0],
-                 edge_coords[1][1]);
+          // printf("Edge %d ends: (%.16f %.16f), (%.16f, %.16f)\n", edge,
+          //        edge_coords[0][0], edge_coords[0][1], edge_coords[1][0],
+          //        edge_coords[1][1]);
           bool is_on_this_edge =
               isPointOnLineSegment(edge_coords[0], edge_coords[1], origin_rz);
           origin_on_edge = (is_on_this_edge) ? edge : origin_on_edge;
-          printf("!! Found origin on edge %d: %d\n", i, origin_on_edge);
+          // printf("!! Found origin on edge %d: %d\n", i, origin_on_edge);
         }
-        printf("INFO: Current element edges: %d %d %d\n", current_el_edges[0],
-               current_el_edges[1], current_el_edges[2]);
-        // printf("INFO: Potential intersected edges: %d %d %d\n",
-        // potential_intersected_edges[0], potential_intersected_edges[1],
-        // potential_intersected_edges[2]);
-        printf("INFO: Origin on edge: %d\n", origin_on_edge);
+        // printf("INFO: Current element edges: %d %d %d\n",
+        // current_el_edges[0],
+        //        current_el_edges[1], current_el_edges[2]);
+        //  printf("INFO: Potential intersected edges: %d %d %d\n",
+        //  potential_intersected_edges[0], potential_intersected_edges[1],
+        //  potential_intersected_edges[2]);
+        // printf("INFO: Origin on edge: %d\n", origin_on_edge);
 
         o::LO other_face = -1;
         {
@@ -745,7 +746,7 @@ bool search_adjacency_with_bcc(
                     : edge2faceFace[edge2faceOffsets[origin_on_edge]];
           }
         }
-        printf("INFO: Other face: %d\n", other_face);
+        // printf("INFO: Other face: %d\n", other_face);
 
         o::LO intersecting_face = e;
         if (origin_on_edge != -1) {  // dest in on the same side of the edge
@@ -787,7 +788,7 @@ bool search_adjacency_with_bcc(
           intersecting_face =
               (!is_on_same_side_of_line) ? other_face : intersecting_face;
         }
-        printf("INFO: Intersecting face: %d\n", intersecting_face);
+        // printf("INFO: Intersecting face: %d\n", intersecting_face);
 
         const auto intersecting_face_verts =
             o::gather_verts<3>(faces2nodes, intersecting_face);
@@ -816,9 +817,9 @@ bool search_adjacency_with_bcc(
           o::Few<o::Vector<2>, 2> edge_coords = {
               o::get_vector<2>(coords, edge_verts[0]),
               o::get_vector<2>(coords, edge_verts[1])};
-          printf("Edge %d ends: (%.16f %.16f), (%.16f, %.16f)\n", edge,
-                 edge_coords[0][0], edge_coords[0][1], edge_coords[1][0],
-                 edge_coords[1][1]);
+          // printf("Edge %d ends: (%.16f %.16f), (%.16f, %.16f)\n", edge,
+          //        edge_coords[0][0], edge_coords[0][1], edge_coords[1][0],
+          //        edge_coords[1][1]);
           auto intersection_result = find_intersection_point(
               {origin_rz, dest_rz}, {edge_coords[0], edge_coords[1]});
           bool intersected = intersection_result.exists;
@@ -827,9 +828,9 @@ bool search_adjacency_with_bcc(
               (intersected) ? intersection_result.point : intersection_point;
         }
 
-        printf("INFO: Particle %d intersects at %.16f %.16f\n", pid,
-               intersection_point[0], intersection_point[1]);
-        printf("INFO: Intersected edge: %d\n", intersected_edge);
+        // printf("INFO: Particle %d intersects at %.16f %.16f\n", pid,
+        //        intersection_point[0], intersection_point[1]);
+        // printf("INFO: Intersected edge: %d\n", intersected_edge);
         {
           // get new theta
           o::Real r_change_fraction = (intersection_point[0] - origin_rz[0]) /
@@ -870,12 +871,12 @@ bool search_adjacency_with_bcc(
           }
           elem_ids_next[pid] = next_face;
 
-          if (leaked) {
-            printf("INFO: Particle %d leaked from element %d\n", pid, e);
-          } else {
-            printf("INFO: Next face for particle %d: %d\n", pid,
-                   elem_ids_next[pid]);
-          }
+          // if (leaked) {
+          //   printf("INFO: Particle %d leaked from element %d\n", pid, e);
+          // } else {
+          //   printf("INFO: Next face for particle %d: %d\n", pid,
+          //          elem_ids_next[pid]);
+          // }
         }
       }
     };
