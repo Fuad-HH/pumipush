@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(pumipush LANGUAGES CXX CUDA)
+project(pumipush LANGUAGES C CXX CUDA)
 enable_testing()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)

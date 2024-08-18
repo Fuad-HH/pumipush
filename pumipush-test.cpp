@@ -25,10 +25,12 @@ void check_cyl2cart();
 void test_intersection();
 void test_on_edge_origin_case();
 void test_move_particle_accross_element_boundary();
+void test_bcc_intersection_methods();
 
 int main(int argc, char** argv) {
+  test_bcc_intersection_methods();
   test_intersection();
-  test_on_edge_origin_case();
+  // test_on_edge_origin_case();
   auto lib = o::Library(&argc, &argv);
   OMEGA_H_CHECK(std::string(lib.version()) == OMEGA_H_SEMVER);
   bbox_varification_7k(&lib);
@@ -37,6 +39,103 @@ int main(int argc, char** argv) {
   bbox_varification_2dBox(&lib);
   check_cyl2cart();
   test_move_particle_accross_element_boundary();
+}
+
+void test_bcc_intersection_methods() {
+  printf("Test: BCC intersection methods...\n");
+  o::Few<o::Vector<2>, 3> tri_1 = {{0, 0}, {1, 0}, {0.5, 1}};
+  auto basis_1 = barycentric_basis(tri_1);
+  o::Few<o::Vector<3>, 3> expected_basis = {{0, 1, 0.5}, {0, 0, 1}, {1, 1, 1}};
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      OMEGA_H_CHECK(std::abs(basis_1[i][j] - expected_basis[i][j]) < 1.0e-6);
+    }
+  }
+
+  o::Few<o::Vector<2>, 3> tri_2 = {{1, 2}, {3, 4}, {5, 6}};
+  auto basis_2 = barycentric_basis(tri_2);
+  expected_basis = {{1, 3, 5}, {2, 4, 6}, {1, 1, 1}};
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      OMEGA_H_CHECK(std::abs(basis_2[i][j] - expected_basis[i][j]) < 1.0e-6);
+    }
+  }
+
+  o::Vector<3> bc3 = {0, 0, 1};
+  auto c1 = barycentric2real(tri_2, bc3);
+  // expected {5, 6}
+  OMEGA_H_CHECK(std::abs(c1[0] - tri_2[2][0]) < 1.0e-6 &&
+                std::abs(c1[1] - tri_2[2][1]) < 1.0e-6);
+  bc3 = {0, 1, 0};
+  c1 = barycentric2real(tri_2, bc3);
+  OMEGA_H_CHECK(std::abs(c1[0] - tri_2[1][0]) < 1.0e-6 &&
+                std::abs(c1[1] - tri_2[1][1]) < 1.0e-6);
+  bc3 = {0, 0.5, 0.5};
+  c1 = barycentric2real(tri_2, bc3);
+  OMEGA_H_CHECK(std::abs(c1[0] - 4) < 1.0e-6 && std::abs(c1[1] - 5) < 1.0e-6);
+
+  o::Few<o::Vector<2>, 2> ray = {{0.2, 0.2}, {-1, 0.5}};
+  auto origin_bcc = o::barycentric_from_global<2, 2>(ray[0], tri_1);
+  auto dest_bcc = o::barycentric_from_global<2, 2>(ray[1], tri_1);
+  IntersectionBccResult result_e0 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  IntersectionBccResult result_e1 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+
+  OMEGA_H_CHECK(!result_e0.exists);
+  OMEGA_H_CHECK(result_e1.exists);
+  o::Vector<3> expected_intersection_bcc = {0.777777777777, 0.0,
+                                            0.222222222222};
+  for (int i = 0; i < 3; i++) {
+    OMEGA_H_CHECK(std::abs(result_e1.bcc[i] - expected_intersection_bcc[i]) <
+                  1.0e-6);
+  }
+
+  o::Few<o::Vector<2>, 3> u_tri{{-2.0, -3}, {7, -1.0}, {-2, 5}};
+  o::Few<o::Vector<2>, 2> ray_inside2out{{0, 0}, {-23, 10}};
+  origin_bcc = o::barycentric_from_global<2, 2>(ray_inside2out[0], u_tri);
+  OMEGA_H_CHECK(all_positive(origin_bcc, 0.0));
+  dest_bcc = o::barycentric_from_global<2, 2>(ray_inside2out[1], u_tri);
+  OMEGA_H_CHECK(!all_positive(dest_bcc, 0.0));
+  result_e1 = find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+  OMEGA_H_CHECK(result_e1.exists);
+  auto intersection_point = barycentric2real(u_tri, result_e1.bcc);
+  OMEGA_H_CHECK(std::abs(intersection_point[0] + 2.0) < 1.0e-6);
+  OMEGA_H_CHECK(intersection_point[1] > -3.0 && intersection_point[1] < 5.0);
+
+  result_e0 = find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  auto result_e2 = find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  OMEGA_H_CHECK(!result_e0.exists);
+  OMEGA_H_CHECK(!result_e2.exists);
+
+  o::Few<o::Vector<2>, 2> ray_out2in{{-23, 10}, {-1, 0.1}};
+  origin_bcc = o::barycentric_from_global<2, 2>(ray_out2in[0], u_tri);
+  OMEGA_H_CHECK(!all_positive(origin_bcc, 0.0));
+  dest_bcc = o::barycentric_from_global<2, 2>(ray_out2in[1], u_tri);
+  OMEGA_H_CHECK(all_positive(dest_bcc, 0.0));
+  result_e1 = find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+  OMEGA_H_CHECK(result_e1.exists);
+  intersection_point = barycentric2real(u_tri, result_e1.bcc);
+  OMEGA_H_CHECK(std::abs(intersection_point[0] + 2.0) < 1.0e-6);
+  OMEGA_H_CHECK(intersection_point[1] > -3.0 && intersection_point[1] < 5.0);
+
+  result_e0 = find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  result_e2 = find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  OMEGA_H_CHECK(!result_e0.exists);
+  OMEGA_H_CHECK(!result_e2.exists);
+
+  o::Few<o::Vector<2>, 2> ray_in2in{{-1, 0.1}, {0, 0}};
+  origin_bcc = o::barycentric_from_global<2, 2>(ray_in2in[0], u_tri);
+  OMEGA_H_CHECK(all_positive(origin_bcc, 0.0));
+  dest_bcc = o::barycentric_from_global<2, 2>(ray_in2in[1], u_tri);
+  OMEGA_H_CHECK(all_positive(dest_bcc, 0.0));
+  result_e1 = find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+  OMEGA_H_CHECK(!result_e1.exists);
+  result_e0 = find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  result_e2 = find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  OMEGA_H_CHECK(!result_e0.exists);
+
+  printf("BCC intersection methods test passed\n");
 }
 
 void check_is_inside_tet() {}

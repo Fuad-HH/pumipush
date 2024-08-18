@@ -67,6 +67,10 @@ struct IntersectionResult {
   bool exists = false;
   o::Vector<2> point = o::Vector<2>{0.0, 0.0};
 };
+struct IntersectionBccResult {
+  bool exists = false;
+  o::Vector<3> bcc = o::Vector<3>{0.0, 0.0, 0.0};
+};
 // ******************** Function Prototypes ******************** //
 Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
     int league_size, int team_size);
@@ -422,6 +426,43 @@ OMEGA_H_DEVICE o::Real get_dest_theta(const o::Vector<3>& origin_rThz,
   o::Real theta = Kokkos::atan2(direction_xyz[0], direction_xyz[1]);
 
   return theta;
+}
+
+OMEGA_H_DEVICE o::Few<o::Vector<3>, 3> barycentric_basis(
+    const o::Few<o::Vector<2>, 3> tri_verts) {
+  o::Few<o::Vector<3>, 3> basis;
+  for (int i = 0; i < 3; i++) {
+    basis[0][i] = tri_verts[i][0];
+    basis[1][i] = tri_verts[i][1];
+    basis[2][i] = 1.0;
+  }
+  return basis;
+}
+
+OMEGA_H_DEVICE o::Vector<2> barycentric2real(
+    const o::Few<o::Vector<2>, 3> tri_verts, const o::Vector<3> bary) {
+  o::Few<o::Vector<3>, 3> basis = barycentric_basis(tri_verts);
+  o::Vector<2> real_coords;
+  // real_coords = basis * bary;
+  real_coords[0] =
+      basis[0][0] * bary[0] + basis[0][1] * bary[1] + basis[0][2] * bary[2];
+  real_coords[1] =
+      basis[1][0] * bary[0] + basis[1][1] * bary[1] + basis[1][2] * bary[2];
+  return real_coords;
+}
+
+OMEGA_H_DEVICE IntersectionBccResult find_intersection_with_bcc(
+    const o::Vector<3> origin_bcc, const o::Vector<3> dest_bcc, int edge) {
+  o::Vector<3> bcc_vector = dest_bcc - origin_bcc;
+  o::Real u = origin_bcc[edge] / (origin_bcc[edge] - dest_bcc[edge]);
+  o::Vector<3> ray_intersect_bcc = origin_bcc + u * bcc_vector;
+  int start_vertex[3]{1, 2, 0};
+  o::Real s = -1.0 * (ray_intersect_bcc[start_vertex[edge]] - 1);
+  IntersectionBccResult result;
+  result.exists = (s >= 0.0 && s <= 1.0) && (u >= 0.0 && u <= 1.0);
+  result.bcc = ray_intersect_bcc;
+
+  return result;
 }
 
 #endif
