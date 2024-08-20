@@ -459,10 +459,53 @@ OMEGA_H_DEVICE IntersectionBccResult find_intersection_with_bcc(
   int start_vertex[3]{1, 2, 0};
   o::Real s = -1.0 * (ray_intersect_bcc[start_vertex[edge]] - 1);
   IntersectionBccResult result;
-  result.exists = (s >= 0.0 && s <= 1.0) && (u >= 0.0 && u <= 1.0);
+  // printf("INFO: u: %.16f, s: %.16f\n", u, s);
+  result.exists = (s > 0.0 && s <= 1.0) &&
+                  (u > EPSILON && u <= 1.0);  // todo remove magic number
   result.bcc = ray_intersect_bcc;
 
   return result;
+}
+
+/**
+ * @brief check if the origin is inside the bcc and not on the corner
+ * @param origin_bcc
+ * @details checks if bcc is all postive and only one can be 0 at a time
+ */
+OMEGA_H_DEVICE void check_origin_bcc_validity(const o::Vector<3> origin_bcc) {
+  OMEGA_H_CHECK(all_positive(origin_bcc, EPSILON));
+  o::LO n_edges = 0;
+  for (int i = 0; i < 3; i++) {
+    n_edges += (origin_bcc[i] < -EPSILON);
+  }
+  OMEGA_H_CHECK(n_edges <= 1);
+}
+
+OMEGA_H_DEVICE o::LO get_edge_holding_point(const o::Vector<3> bcc,
+                                            o::Few<o::LO, 3> el_edges) {
+  o::LO edge = -1;
+  for (int i = 0; i < 3; i++) {
+    edge = (std::abs(bcc[i]) < EPSILON) ? el_edges[(i + 1) % 3] : edge;
+  }
+  return edge;
+}
+
+OMEGA_H_DEVICE o::LO get_the_other_adj_face_of_edge(
+    o::LO edge, o::LO current_el, const o::LOs edge2faceOffsets,
+    const o::LOs edge2faceFace, const o::Read<o::I8> exposed_edges) {
+  o::LO other_face = -1;
+  if (edge != -1) {
+    // get the other face of the edge if it's on an edge
+    o::LO n_adj_faces = edge2faceOffsets[edge + 1] - edge2faceOffsets[edge];
+    bool on_boundary = (n_adj_faces == 1);
+    OMEGA_H_CHECK(on_boundary == exposed_edges[edge]);
+    if (!on_boundary) {
+      other_face = (edge2faceFace[edge2faceOffsets[edge]] == current_el)
+                       ? edge2faceFace[edge2faceOffsets[edge] + 1]
+                       : edge2faceFace[edge2faceOffsets[edge]];
+    }
+  }
+  return other_face;
 }
 
 #endif

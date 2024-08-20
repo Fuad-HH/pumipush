@@ -4,6 +4,7 @@ build/
 *.vtk
 *.vtu
 .cache/
+.vscode/*
 compile_commands.json
 meshes/*x_t
 meshes/*.smd

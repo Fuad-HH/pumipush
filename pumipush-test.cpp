@@ -26,12 +26,22 @@ void test_intersection();
 void test_on_edge_origin_case();
 void test_move_particle_accross_element_boundary();
 void test_bcc_intersection_methods();
+void test_tri_node_edge_adj_info_consistency(o::Library* lib);
+void test_relation_between_bcc_and_edge(o::Library* lib);
+void test_bcc_intersection_for_p3d();
+void test_intersection_LCPP_10627();
+void test_intersect_all_edges();
 
 int main(int argc, char** argv) {
+  auto lib = o::Library(&argc, &argv);
+  test_intersect_all_edges();
+  test_intersection_LCPP_10627();
+  // test_bcc_intersection_for_p3d();
+  test_relation_between_bcc_and_edge(&lib);
+  test_tri_node_edge_adj_info_consistency(&lib);
   test_bcc_intersection_methods();
   test_intersection();
   // test_on_edge_origin_case();
-  auto lib = o::Library(&argc, &argv);
   OMEGA_H_CHECK(std::string(lib.version()) == OMEGA_H_SEMVER);
   bbox_varification_7k(&lib);
   bbox_verification_coarseWest(&lib);
@@ -39,6 +49,143 @@ int main(int argc, char** argv) {
   bbox_varification_2dBox(&lib);
   check_cyl2cart();
   test_move_particle_accross_element_boundary();
+}
+
+void test_intersect_all_edges() {
+  printf("Test: intersect all edges...\n");
+  o::Few<o::Vector<2>, 3> tri = {{1.86603, 0.5}, {2.13397, -0.5}, {1, 0}};
+  o::Vector<2> origin = {1.9446295144898407, 0.1260601696803720};
+  o::Vector<2> dest = {2.0007231239607082, 0.1512722036160794};
+
+  auto origin_bcc = o::barycentric_from_global<2, 2>(origin, tri);
+  auto dest_bcc = o::barycentric_from_global<2, 2>(dest, tri);
+  OMEGA_H_CHECK(all_positive(origin_bcc, 0.0));
+  OMEGA_H_CHECK(!all_positive(dest_bcc, 0.0));
+
+  IntersectionBccResult result_e0 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  IntersectionBccResult result_e1 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+  IntersectionBccResult result_e2 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  printf("Exists: %d %d %d\n", result_e0.exists, result_e1.exists,
+         result_e2.exists);
+}
+
+void test_intersection_LCPP_10627() {
+  printf("Test: intersection for LCPP-10627...\n");
+  o::Few<o::Vector<2>, 3> el10627 = {{2.3638890457070847, 0.3339009278951910},
+                                     {2.3614440013667641, 0.3265147585787270},
+                                     {2.3669213202267083, 0.3291142310482917}};
+  o::Vector<2> dest{2.3630059791071032, 0.3312355204866098};
+  o::Vector<2> origin = (el10627[1] + el10627[2]) / 2.0;
+
+  auto origin_bcc = o::barycentric_from_global<2, 2>(origin, el10627);
+  auto dest_bcc = o::barycentric_from_global<2, 2>(dest, el10627);
+
+  printf("BCC-origin: %f %f %f\n", origin_bcc[0], origin_bcc[1], origin_bcc[2]);
+  printf("BCC-dest: %f %f %f\n", dest_bcc[0], dest_bcc[1], dest_bcc[2]);
+  OMEGA_H_CHECK(all_positive(origin_bcc, EPSILON));
+  OMEGA_H_CHECK(!all_positive(dest_bcc, 0.0));
+
+  IntersectionBccResult result_e2 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  OMEGA_H_CHECK(result_e2.exists);
+}
+void test_bcc_intersection_for_p3d() {
+  printf("Test: BCC intersection for pseudo3D problem...\n");
+  o::Few<o::Vector<2>, 3> tri = {{1, -1}, {1.1397, -0.5}, {1, 0}};
+  o::Vector<2> origin = {1.377992, -0.5};
+  o::Vector<2> dest = {3, 1};
+
+  auto origin_bcc = o::barycentric_from_global<2, 2>(origin, tri);
+  auto dest_bcc = o::barycentric_from_global<2, 2>(dest, tri);
+
+  IntersectionBccResult result_e0 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  IntersectionBccResult result_e1 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+  IntersectionBccResult result_e2 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  printf("BCC: %f %f %f\n", origin_bcc[0], origin_bcc[1], origin_bcc[2]);
+
+  OMEGA_H_CHECK(result_e0.exists);
+  OMEGA_H_CHECK(!result_e1.exists);
+  OMEGA_H_CHECK(!result_e2.exists);
+}
+
+void test_relation_between_bcc_and_edge(o::Library* lib) {
+  printf("Test: relation between bcc and edge...\n");
+  o::Mesh mesh(lib);
+  o::binary::read("assets/square.osh", lib->world(), &mesh);
+  OMEGA_H_CHECK(mesh.dim() == 2);
+  const auto face2edgeEdge = mesh.ask_down(o::FACE, o::EDGE).ab2b;
+  const auto face2nodeNode = mesh.ask_down(o::FACE, o::VERT).ab2b;
+  const auto edge2nodeNode = mesh.ask_down(o::EDGE, o::VERT).ab2b;
+  const auto coords = mesh.coords();
+
+  auto verify_bcc_edge_relation = OMEGA_H_LAMBDA(o::LO id) {
+    o::LO face_id = 0;
+    o::Vector<2> origin = {3.0, 0.5};
+    o::Few<o::LO, 3> face_nodes = {face2nodeNode[3 * face_id],
+                                   face2nodeNode[3 * face_id + 1],
+                                   face2nodeNode[3 * face_id + 2]};
+    o::Few<o::LO, 3> face_edges = {face2edgeEdge[3 * face_id],
+                                   face2edgeEdge[3 * face_id + 1],
+                                   face2edgeEdge[3 * face_id + 2]};
+    auto face_node_coords = o::gather_vectors<3, 2>(coords, face_nodes);
+    auto bcc = o::barycentric_from_global<2, 2>(origin, face_node_coords);
+    // printf("BCC: %f %f %f\n", bcc[0], bcc[1], bcc[2]);
+    o::LO origin_on_edge = -1;
+    o::LO cor_node = -1;
+    for (int i = 0; i < 3; i++) {
+      bool is_on_edge = std::abs(bcc[i]) < EPSILON;
+      cor_node = (is_on_edge) ? face_nodes[i] : cor_node;
+      origin_on_edge = (is_on_edge) ? face_edges[(i + 1) % 3] : origin_on_edge;
+    }
+    OMEGA_H_CHECK(origin_on_edge == 17 && cor_node == 13);
+  };
+  o::parallel_for("verify_bcc_edge_relation", 1, verify_bcc_edge_relation);
+}
+
+void test_tri_node_edge_adj_info_consistency(o::Library* lib) {
+  // load  a mesh
+  Omega_h::Mesh mesh(lib);
+  Omega_h::binary::read("assets/coarseWestLCPP.osh", lib->world(), &mesh);
+  OMEGA_H_CHECK(mesh.dim() == 2);
+  const auto face2edgeEdge = mesh.ask_down(o::FACE, o::EDGE).ab2b;
+  const auto face2nodeNode = mesh.ask_down(o::FACE, o::VERT).ab2b;
+  const auto edge2nodeNode = mesh.ask_down(o::EDGE, o::VERT).ab2b;
+
+  // get the nodes of the 0th face
+  auto verify_edge_node_relation = OMEGA_H_LAMBDA(o::LO face_id) {
+    // o::LO face_id = 9;
+    // printf("Checking Face %d...\n", face_id);
+    o::Few<o::LO, 3> face_nodes = {face2nodeNode[3 * face_id],
+                                   face2nodeNode[3 * face_id + 1],
+                                   face2nodeNode[3 * face_id + 2]};
+    o::Few<o::LO, 3> face_edges = {face2edgeEdge[3 * face_id],
+                                   face2edgeEdge[3 * face_id + 1],
+                                   face2edgeEdge[3 * face_id + 2]};
+    // printf("Face nodes: %d %d %d\n", face_nodes[0], face_nodes[1],
+    //        face_nodes[2]);
+    // printf("Face edges: %d %d %d\n", face_edges[0], face_edges[1],
+    //        face_edges[2]);
+    o::Few<o::Few<o::LO, 2>, 3> edge_nodes;
+    for (int local_edge_id = 0; local_edge_id < 3; local_edge_id++) {
+      edge_nodes[local_edge_id] = {
+          edge2nodeNode[2 * face_edges[local_edge_id]],
+          edge2nodeNode[2 * face_edges[local_edge_id] + 1]};
+      OMEGA_H_CHECK(edge_nodes[local_edge_id][0] !=
+                    face_nodes[(local_edge_id + 2) % 3]);
+      OMEGA_H_CHECK(edge_nodes[local_edge_id][1] !=
+                    face_nodes[(local_edge_id + 2) % 3]);
+      // printf("Edge %d nodes: %d %d\n", face_edges[local_edge_id],
+      // edge_nodes[local_edge_id][0], edge_nodes[local_edge_id][1]);
+    }
+  };
+  o::parallel_for("verify_edge_node_relation", mesh.nelems(),
+                  verify_edge_node_relation);
 }
 
 void test_bcc_intersection_methods() {
