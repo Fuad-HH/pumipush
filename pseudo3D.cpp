@@ -138,6 +138,7 @@ int main(int argc, char* argv[]) {
   int iter;  // iteration number
   int np;    //
   int ps_np;
+  random_pool_t rand_pool(1);
 
   // ******************* Monte Carlo Transport Simulation ******************* //
   for (iter = 1; iter <= num_iterations; ++iter) {
@@ -155,7 +156,7 @@ int main(int argc, char* argv[]) {
     }
     timer.reset();
     // 2. push particles
-    pseudo2Dpush(ptcls, lambda);
+    pseudo2Dpush(ptcls, lambda, rand_pool);
     MPI_Barrier(MPI_COMM_WORLD);
     if (comm_rank == 0)
       fprintf(stderr, "TIME: push and transfer (seconds) %f\n",

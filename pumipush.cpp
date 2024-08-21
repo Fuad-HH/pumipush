@@ -112,14 +112,14 @@ void printTiming(const char* name, double t) {
   fprintf(stderr, "kokkos %s (seconds) %f\n", name, t);
 }
 
-void pseudo2Dpush(PS* ptcls, double lambda) {
+void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool) {
   Kokkos::Timer timer;
   auto position_d = ptcls->get<0>();
   auto new_position_d = ptcls->get<1>();
 
   double totTime = 0;
   timer.reset();
-  random_pool_t pool(34973947);
+  // random_pool_t pool(34973947);
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
       double distance = random_path_length(lambda, pool);
@@ -147,13 +147,13 @@ void pseudo2Dpush(PS* ptcls, double lambda) {
   printTiming("ps push", totTime);
 }
 
-void push(PS* ptcls, int np, double lambda) {
+void push(PS* ptcls, int np, double lambda, random_pool_t pool) {
   Kokkos::Timer timer;
   auto position_d = ptcls->get<0>();
   auto new_position_d = ptcls->get<1>();
 
   double totTime = 0;
-  random_pool_t pool(1937493);
+  // random_pool_t pool(1937493);
   timer.reset();
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {

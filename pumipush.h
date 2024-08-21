@@ -116,9 +116,9 @@ void printTiming(const char* name, double t);
 /**
  * Push the particles in the direction of the vector
  */
-void pseudo2Dpush(PS* ptcls, double lambda);
+void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool);
 
-void push(PS* ptcls, int np, double lambda);
+void push(PS* ptcls, int np, double lambda, random_pool_t pool);
 
 /**
  * Get a random direction uniformly distributed on the unit sphere
@@ -293,21 +293,24 @@ OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
   // std::mt19937 gen(0);
   // std::uniform_real_distribution<> dis(0, 1);
   auto gen = random_pool.get_state();
-  double rn = gen.drand(0., 1.);
-  double rn2 = gen.drand(0., 1.);
+  double theta = gen.drand(0., 2. * M_PI);
+  double phi = Kokkos::acos(2 * gen.drand(0., 1.) - 1);
   random_pool.free_state(gen);
-  double mu = 2 * rn - 1;
-  // cosine in the particles incident direction
-  double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
-  // cosine with the plane of the collision
-  double nu_lab = 2 * rn2 - 1;
+  // double mu = 2 * rn - 1;
+  //// cosine in the particles incident direction
+  // double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
+  //// cosine with the plane of the collision
+  // double nu_lab = 2 * rn2 - 1;
   o::Vector<3> dir;
 
   // TODO: replace this dummy direction with the actual direction
   // actual direction needs the incident direction
-  dir[0] = std::sqrt(1 - mu_lab * mu_lab) * std::cos(2 * M_PI * nu_lab);
-  dir[1] = std::sqrt(1 - mu_lab * mu_lab) * std::sin(2 * M_PI * nu_lab);
-  dir[2] = mu_lab;
+  // dir[0] = std::sqrt(1 - mu_lab * mu_lab) * std::cos(2 * M_PI * nu_lab);
+  // dir[1] = std::sqrt(1 - mu_lab * mu_lab) * std::sin(2 * M_PI * nu_lab);
+  // dir[2] = mu_lab;
+  dir[0] = Kokkos::sin(phi) * Kokkos::cos(theta);
+  dir[1] = Kokkos::sin(phi) * Kokkos::sin(theta);
+  dir[2] = Kokkos::cos(phi);
   return dir;
 }
 
