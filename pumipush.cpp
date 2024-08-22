@@ -767,19 +767,38 @@ bool search_adjacency_with_bcc(
           for (int i = 0; i < 3; i++) {
             auto intersection_result = find_intersection_with_bcc(
                 bcc_origin_intFace, bcc_dest_intFace, i);
-            intersected = (intersection_result.exists) ? true : intersected;
-            bcc_intersected_edge = (intersection_result.exists)
-                                       ? intersecting_face_edges[(i + 1) % 3]
-                                       : bcc_intersected_edge;
-            bcc_intersected_point = (intersection_result.exists)
+            o::LO temp_edge = intersecting_face_edges[(i + 1) % 3];
+            bool not_previous_edge = temp_edge != origin_on_edge;
+            bool valid_intersection_found =
+                intersection_result.exists && not_previous_edge;
+            bcc_intersected_edge =
+                (valid_intersection_found) ? temp_edge : bcc_intersected_edge;
+            bcc_intersected_point = (valid_intersection_found)
                                         ? intersection_result.bcc
                                         : bcc_intersected_point;
-            // printf("Iter: %d :Particle %d in element %d: Intersected edge:
-            // %d\n",i, pid, intersecting_face, bcc_intersected_edge);
+            intersected = (valid_intersection_found) ? true : intersected;
+            // if (pid == 9834){
+            //  printf("Iter: %d :Particle %d in element %d: Intersected edge:
+            //  %d\n",i, pid, intersecting_face, bcc_intersected_edge);
+            //  printf("Iter: %d :Current origin: %.16f, %.16f\n current dest:
+            //  %.16f, %.16f\n",i, current_origin[0], current_origin[1],
+            //  dest_rz[0], dest_rz[1]); printf("Iter: %d :Origin on edge %d ,
+            //  bcc_intersected_edge %d\n",i, origin_on_edge,
+            //  bcc_intersected_edge);
+            // }
           }
+          origin_on_edge = (bcc_intersected_edge != -1) ? bcc_intersected_edge
+                                                        : origin_on_edge;
 #ifdef DEBUG
           bool edge_found = (bcc_intersected_edge != -1);
           OMEGA_H_CHECK(intersected == edge_found);
+          // dest not in the element but didn't intersect any edge
+          // if (!all_positive(bcc_dest_intFace, 0.0) && !intersected){
+          //  printf("Search Error!!: particle %d dest not in the element %d but
+          //  didn't intersect any edge\n", pid, intersecting_face);
+          //}
+          // OMEGA_H_CHECK(!all_positive(bcc_dest_intFace, 0.0) &&
+          // !intersected);
 #endif
           auto intersected_point = barycentric2real(
               intersecting_face_vert_coords, bcc_intersected_point);
@@ -792,14 +811,65 @@ bool search_adjacency_with_bcc(
               bcc_intersected_edge, intersecting_face, edge2faceOffsets,
               edge2faceFace, exposed_edges);
 
-          leaked = intersected && exposed_edges[bcc_intersected_edge];
+          bool is_exposed = (bcc_intersected_edge != -1)
+                                ? exposed_edges[bcc_intersected_edge]
+                                : false;
+          leaked = is_exposed;
           // if (leaked){ printf("INFO: Particle %d leaked from element %d edge
           // %d\n", pid, intersecting_face, bcc_intersected_edge);}
-          intersecting_face =
-              (leaked || next_face == -1) ? intersecting_face : next_face;
-          // update origin position
-          current_origin = intersected_point;
+          // intersecting_face =
+          //    (leaked || next_face == -1) ? intersecting_face : next_face;
+          intersecting_face = (intersected) ? next_face : intersecting_face;
+          // update origin position for next iteration in while loop
+          current_origin = cur_it_dest;
           iteration++;
+#ifdef dDEBUG
+          // check if the current position is in the current element
+          if (!leaked) {
+            auto next_face_verts =
+                o::gather_verts<3>(faces2nodes, intersecting_face);
+            auto next_face_coords =
+                o::gather_vectors<3, 2>(coords, next_face_verts);
+            auto bcc_next_origin =
+                o::barycentric_from_global<2, 2>(cur_it_dest, next_face_coords);
+            bool invalid_bcc = !all_positive(bcc_next_origin, EPSILON);
+            if (invalid_bcc) {
+              // print all the information
+              printf("Search Error!!: BCC origin: %.16f, %.16f, %.16f\n",
+                     bcc_next_origin[0], bcc_next_origin[1],
+                     bcc_next_origin[2]);
+              printf(
+                  "Search Error!!: Particle %d in element %d (original "
+                  "element: %d): Origin: %.16f, %.16f "
+                  "Dest: %.16f, %.16f\n",
+                  pid, intersecting_face, e, origin_rThz[0], origin_rThz[2],
+                  dest_rz[0], dest_rz[1]);
+              printf("Search Error!!: Iteration: %d\n", iteration);
+              printf(
+                  "Search Error!!: Particle %d in element %d: Intersected "
+                  "edge: %d\n",
+                  pid, intersecting_face, bcc_intersected_edge);
+              printf(
+                  "Search Error!!: Particle %d in element %d: Intersected "
+                  "point: %.16f, "
+                  "%.16f\n",
+                  pid, intersecting_face, intersected_point[0],
+                  intersected_point[1]);
+              printf(
+                  "Search Error!!: Particle %d in element %d: Next face: %d\n",
+                  pid, intersecting_face, next_face);
+              printf(
+                  "Search Error!!: Element vert coords: (%.16f, %.16f), "
+                  "(%.16f, %.16f), "
+                  "(%.16f, %.16f)\n",
+                  next_face_coords[0][0], next_face_coords[0][1],
+                  next_face_coords[1][0], next_face_coords[1][1],
+                  next_face_coords[2][0], next_face_coords[2][1]);
+            }
+            OMEGA_H_CHECK(all_positive(bcc_next_origin, EPSILON));
+          }
+
+#endif
 
           // printf("Intersected edge for particle %d in element %d: %d\n", pid,
           // intersecting_face, bcc_intersected_edge);

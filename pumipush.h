@@ -464,7 +464,7 @@ OMEGA_H_DEVICE IntersectionBccResult find_intersection_with_bcc(
   IntersectionBccResult result;
   // printf("INFO: u: %.16f, s: %.16f\n", u, s);
   result.exists = (s > 0.0 && s <= 1.0) &&
-                  (u > EPSILON && u <= 1.0);  // todo remove magic number
+                  (u > 0.0 && u <= 1.0);  // todo remove magic number
   result.bcc = ray_intersect_bcc;
 
   return result;

@@ -31,9 +31,11 @@ void test_relation_between_bcc_and_edge(o::Library* lib);
 void test_bcc_intersection_for_p3d();
 void test_intersection_LCPP_10627();
 void test_intersect_all_edges();
+void test_element_case_9834();
 
 int main(int argc, char** argv) {
   auto lib = o::Library(&argc, &argv);
+  test_element_case_9834();
   test_intersect_all_edges();
   test_intersection_LCPP_10627();
   // test_bcc_intersection_for_p3d();
@@ -51,6 +53,29 @@ int main(int argc, char** argv) {
   test_move_particle_accross_element_boundary();
 }
 
+void test_element_case_9834() {
+  printf("Test: element case 9834...\n");
+  o::Few<o::Vector<2>, 3> tri = {{2.7071293727351278, -0.0930694021069807},
+                                 {2.6999306350252650, -0.0994799075658618},
+                                 {2.7034180027260302, -0.1018031881758616}};
+  o::Vector<2> origin = {2.7015263010937849, -0.1005429385838452};
+  o::Vector<2> dest = {2.7015264483607950, -0.1005447430684491};
+
+  auto origin_bcc = o::barycentric_from_global<2, 2>(origin, tri);
+  auto dest_bcc = o::barycentric_from_global<2, 2>(dest, tri);
+  printf("BCC-origin: %f %f %f\n", origin_bcc[0], origin_bcc[1], origin_bcc[2]);
+  OMEGA_H_CHECK(all_positive(origin_bcc, 0.0));
+  OMEGA_H_CHECK(!all_positive(dest_bcc, 0.0));
+
+  IntersectionBccResult result_e0 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 0);
+  IntersectionBccResult result_e1 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 1);
+  IntersectionBccResult result_e2 =
+      find_intersection_with_bcc(origin_bcc, dest_bcc, 2);
+  printf("Exists: %d %d %d\n", result_e0.exists, result_e1.exists,
+         result_e2.exists);
+}
 void test_intersect_all_edges() {
   printf("Test: intersect all edges...\n");
   o::Few<o::Vector<2>, 3> tri = {{1.86603, 0.5}, {2.13397, -0.5}, {1, 0}};
