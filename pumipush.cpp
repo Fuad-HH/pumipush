@@ -32,6 +32,47 @@ o::Mesh readMesh(std::string meshFile, o::Library& lib) {
   }
 }
 
+int distributeParticlesBasesOnArea(const p::Mesh& picparts, PS::kkLidView ppe,
+                                   const int numPtcls) {
+  o::Mesh* mesh = picparts.mesh();
+  o::LO ne = mesh->nelems();
+  o::Real mesh_area = area_of_2d_mesh(*mesh);
+  OMEGA_H_CHECK(mesh_area > 0.0);
+
+  auto coords = mesh->coords();
+  auto face2nodes = mesh->ask_down(o::FACE, o::VERT).ab2b;
+
+  auto distribute_based_on_area = OMEGA_H_LAMBDA(o::LO e) {
+    auto verts = o::gather_verts<3>(face2nodes, e);
+    auto vert_coords = o::gather_vectors<3, 2>(coords, verts);
+    o::Real area = area_tri(vert_coords);
+#ifdef DEBUG
+    OMEGA_H_CHECK(area > 0.0);
+#endif
+    o::Real area_fraction = area / mesh_area;
+    ppe[e] = std::round(numPtcls * area_fraction);
+  };
+  o::parallel_for(ne, distribute_based_on_area);
+
+  Omega_h::LO totPtcls = 0;
+  Kokkos::parallel_reduce(
+      ppe.size(),
+      OMEGA_H_LAMBDA(const int i, Omega_h::LO& lsum) { lsum += ppe[i]; },
+      totPtcls);
+  // assert that the difference not more than 0.01% of the total number of
+  // particles
+  o::Real discrepenacy = 100. * (std::abs(totPtcls - numPtcls) / numPtcls);
+  bool high_discrepancy = discrepenacy > 0.1;
+  if (high_discrepancy) {
+    printf("Error: High discrepancy (%f %) in particle distribution\n",
+           discrepenacy);
+    printf("Intended particles %d, distributed particles %d\n", numPtcls,
+           totPtcls);
+  }
+  OMEGA_H_CHECK(!high_discrepancy);
+  return totPtcls;
+}
+
 int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
                                const int numPtcls) {
   auto ne = picparts.mesh()->nelems();
@@ -46,6 +87,46 @@ int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
       totPtcls);
   assert(totPtcls == numPtcls);
   return totPtcls;
+}
+
+void setUniformPtclCoords(p::Mesh& picparts, PS* ptcls,
+                          random_pool_t random_pool) {
+  o::Mesh* mesh = picparts.mesh();
+  int dim = mesh->dim();
+  OMEGA_H_CHECK(dim == 2);
+
+  auto cells2nodes = mesh->ask_down(o::FACE, o::VERT).ab2b;
+  auto coords = mesh->coords();
+
+  auto x_ps_d = ptcls->get<0>();
+
+  auto set_initial_positions =
+      PS_LAMBDA(const int& e, const int& pid, const int& mask) {
+    if (mask > 0) {
+      auto gen = random_pool.get_state();
+      o::Vector<3> random_bcc{0.0, 0.0, 0.0};
+      random_bcc[0] = gen.drand(0.0, 1.0);
+      random_bcc[1] = gen.drand(0.0, 1.0);
+      o::Real complimentary0 = 1.0 - random_bcc[0];
+      o::Real complimentary1 = 1.0 - random_bcc[1];
+      random_bcc[0] = (random_bcc[0] + random_bcc[1] > 1.0) ? complimentary0
+                                                            : random_bcc[0];
+      random_bcc[1] = (random_bcc[0] + random_bcc[1] > 1.0) ? complimentary1
+                                                            : random_bcc[1];
+      random_bcc[2] = 1.0 - random_bcc[0] - random_bcc[1];
+      o::Real random_theta = gen.drand(-M_PI, M_PI);
+      random_pool.free_state(gen);
+
+      auto verts = o::gather_verts<3>(cells2nodes, e);
+      auto vert_coords = o::gather_vectors<3, 2>(coords, verts);
+
+      auto real_loc = barycentric2real(vert_coords, random_bcc);
+      x_ps_d(pid, 0) = real_loc[0];
+      x_ps_d(pid, 1) = random_theta;
+      x_ps_d(pid, 2) = real_loc[1];
+    }
+  };
+  ps::parallel_for(ptcls, set_initial_positions);
 }
 
 void setInitialPtclCoords(p::Mesh& picparts, PS* ptcls,
@@ -734,7 +815,7 @@ bool search_adjacency_with_bcc(
         o::Real optical_distance = o::norm(dest_rz - origin_rz);
         bool leaked = false;
         o::Vector<2> current_origin = origin_rz;
-        o::LO max_iteration = 100;
+        // o::LO max_iteration = 100;
         o::LO iteration = 0;
         // if (pid == 2){
         //   printf("Particle %d in element %d: Origin: %.16f, %.16f Dest:
@@ -1159,4 +1240,43 @@ void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls) {
   o::parallel_for(mesh->nverts(), accumulate, "calculate_avg_density");
   o::Read<o::Real> ad_r(ad_w);
   mesh->set_tag(o::VERT, "avg_density", ad_r);
+
+  // compute area_weighted_avg_density
+  o::Write<o::Real> particle_density(mesh->nelems(), 0.0);
+  o::Real total_area = area_of_2d_mesh(*mesh);
+  auto face2verts = mesh->ask_down(o::FACE, o::VERT).ab2b;
+  auto coords = mesh->coords();
+
+  auto compute_density = OMEGA_H_LAMBDA(o::LO i) {
+    auto face_nodes = o::gather_verts<3>(face2verts, i);
+    o::Few<o::Vector<2>, 3> face_coords =
+        o::gather_vectors<3, 2>(coords, face_nodes);
+    o::Real face_area = area_tri(face_coords);
+    o::Real face_density = epc[i] / face_area;
+    particle_density[i] = face_density;
+  };
+  o::parallel_for(mesh->nfaces(), compute_density, "compute_density");
+
+  o::Reals particle_density_r(particle_density);
+  mesh->add_tag(o::FACE, "particle_density", 1, o::Reals(particle_density_r));
+}
+
+o::Real area_of_2d_mesh(o::Mesh& mesh) {
+  const auto coords = mesh.coords();
+  const auto faces2nodes = mesh.ask_down(o::FACE, o::VERT).ab2b;
+  const auto n_faces = mesh.nfaces();
+  o::Real total_area = 0.0;
+
+  Kokkos::parallel_reduce(
+      Kokkos::RangePolicy<>(0, n_faces),
+      KOKKOS_LAMBDA(const int i, o::Real& local_area) {
+        auto face_nodes = o::gather_verts<3>(faces2nodes, i);
+        o::Few<o::Vector<2>, 3> face_coords;
+        face_coords = o::gather_vectors<3, 2>(coords, face_nodes);
+        o::Real face_area = area_tri(face_coords);
+        local_area += face_area;
+      },
+      Kokkos::Sum<o::Real>(total_area));
+
+  return total_area;
 }

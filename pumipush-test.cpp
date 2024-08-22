@@ -32,9 +32,11 @@ void test_bcc_intersection_for_p3d();
 void test_intersection_LCPP_10627();
 void test_intersect_all_edges();
 void test_element_case_9834();
+void test_area_related_functions(o::Library* lib);
 
 int main(int argc, char** argv) {
   auto lib = o::Library(&argc, &argv);
+  test_area_related_functions(&lib);
   test_element_case_9834();
   test_intersect_all_edges();
   test_intersection_LCPP_10627();
@@ -51,6 +53,24 @@ int main(int argc, char** argv) {
   bbox_varification_2dBox(&lib);
   check_cyl2cart();
   test_move_particle_accross_element_boundary();
+}
+
+void test_area_related_functions(o::Library* lib) {
+  printf("Test: area related functions...\n");
+  o::Few<o::Vector<2>, 3> tri = {{0, 0}, {1, 0}, {0.5, 1}};
+  double area = area_tri(tri);
+  OMEGA_H_CHECK(std::abs(area - 0.5) < EPSILON);
+  o::Few<o::Vector<2>, 3> tri0 = {{1, 2}, {3, 4}, {5, 6}};
+  area = area_tri(tri0);
+  OMEGA_H_CHECK(std::abs(area - 0.0) < EPSILON);
+  o::Few<o::Vector<2>, 3> tri1 = {{0, 0}, {1, 0}, {0, 1}};
+  area = area_tri(tri1);
+  OMEGA_H_CHECK(std::abs(area - 0.5) < EPSILON);
+
+  o::Mesh mesh(lib);
+  o::binary::read("assets/square.osh", lib->world(), &mesh);
+  o::Real total_area = area_of_2d_mesh(mesh);
+  OMEGA_H_CHECK(std::abs(total_area - 8.0) < EPSILON);
 }
 
 void test_element_case_9834() {

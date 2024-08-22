@@ -91,6 +91,12 @@ o::Mesh readMesh(std::string meshFile, o::Library& lib);
  */
 int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
                                const int numPtcls);
+/**
+ * Populate the particles based on the area of the elements to distribute
+ * uniformly
+ */
+int distributeParticlesBasesOnArea(const p::Mesh& picparts, PS::kkLidView ppe,
+                                   const int numPtcls);
 
 /**
  * Set the initial particle coordinates to the centroid of the parent element
@@ -510,5 +516,27 @@ OMEGA_H_DEVICE o::LO get_the_other_adj_face_of_edge(
   }
   return other_face;
 }
+
+/**
+ * Get triangle area
+ */
+OMEGA_H_DEVICE o::Real area_tri(o::Few<o::Vector<2>, 3> tri_verts) {
+  o::Few<o::Vector<2>, 2> basis22 = {tri_verts[1] - tri_verts[0],
+                                     tri_verts[2] - tri_verts[0]};
+  auto area = o::triangle_area_from_basis(basis22);
+  return area;
+}
+
+/**
+ * Get total area of a 2D mesh
+ */
+o::Real area_of_2d_mesh(o::Mesh& mesh);
+
+/**
+ * Set initial particle positions uniformly distributed in the parent element
+ * and each element gets particles proportional to the area
+ */
+void setUniformPtclCoords(p::Mesh& picparts, PS* ptcls,
+                          random_pool_t random_pool);
 
 #endif

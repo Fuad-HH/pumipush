@@ -97,8 +97,10 @@ int main(int argc, char* argv[]) {
     double element_fraction = double(ne) / full_mesh.nelems();
     num_particles = int(num_particles * element_fraction);
   }
+  // int setPtcls =
+  //     distributeParticlesEqually(picparts, ptcls_per_elem, num_particles);
   int setPtcls =
-      distributeParticlesEqually(picparts, ptcls_per_elem, num_particles);
+      distributeParticlesBasesOnArea(picparts, ptcls_per_elem, num_particles);
   printf("INFO: Number of particles set to elements: \t %d in rank %d\n",
          setPtcls, comm_rank);
 
@@ -112,7 +114,8 @@ int main(int argc, char* argv[]) {
          comm_rank);
 #endif
   random_pool_t random_pool(347932874);
-  setInitialPtclCoords(picparts, ptcls, random_pool);
+  // setInitialPtclCoords(picparts, ptcls, random_pool);
+  setUniformPtclCoords(picparts, ptcls, random_pool);
 #ifdef DEBUG
   printf("INFO: Initial positions of particles set... in rank %d\n", comm_rank);
 #endif
