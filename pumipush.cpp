@@ -662,12 +662,12 @@ OMEGA_H_DEVICE bool isPointOnLineSegment(const o::Vector<2>& lineEnd1,
   return are_coollinear && are_in_range;
 }
 
-bool search_adjacency_with_bcc(
-    o::Mesh& mesh, PS* ptcls, p::Segment<double[3], Kokkos::CudaSpace> x,
-    p::Segment<double[3], Kokkos::CudaSpace> xtgt,
-    p::Segment<int, Kokkos::CudaSpace> pid, o::Write<o::LO> elem_ids,
-    o::Write<o::Real> xpoints_d, o::Write<o::LO> xface_id,
-    o::Read<o::I8> zone_boundary_sides, int looplimit = 10) {
+bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
+                               p::Segment<double[3], Kokkos::CudaSpace> x,
+                               p::Segment<double[3], Kokkos::CudaSpace> xtgt,
+                               p::Segment<int, Kokkos::CudaSpace> pid,
+                               o::Write<o::LO> elem_ids,
+                               o::Write<o::Real> flux) {
   OMEGA_H_CHECK(mesh.dim() == 2);  // only for pseudo3D now
   const auto elemArea = o::measure_elements_real(&mesh);
   o::Real tol = p::compute_tolerance_from_area(elemArea);
@@ -761,6 +761,15 @@ bool search_adjacency_with_bcc(
         const o::Vector<2> direction_rz =
             (dest_rz - origin_rz) / norm(dest_rz - origin_rz);
 
+        o::Vector<3> origin_cart, dest_cart;
+        cylindrical2cartesian(origin_rThz, origin_cart);
+        cylindrical2cartesian(dest_rThz, dest_cart);
+        o::Real total_real_optical_distance = o::norm(dest_cart - origin_cart);
+        o::Real total_optical_distance = o::norm(dest_rz - origin_rz);
+        o::Real optical_distance = o::norm(dest_rz - origin_rz);
+        o::Real real_to_2d_optical_distance_ratio =
+            total_real_optical_distance / total_optical_distance;
+
         auto bcc_dest =
             o::barycentric_from_global<2, 2>(dest_rz, current_el_vert_coords);
         auto bcc_origin =
@@ -812,7 +821,6 @@ bool search_adjacency_with_bcc(
         }
         // printf("INFO: Intersecting face: %d\n", intersecting_face);
 
-        o::Real optical_distance = o::norm(dest_rz - origin_rz);
         bool leaked = false;
         o::Vector<2> current_origin = origin_rz;
         // o::LO max_iteration = 100;
@@ -887,6 +895,10 @@ bool search_adjacency_with_bcc(
               (intersected) ? intersected_point : dest_rz;
           o::Real parsed_distance = o::norm(cur_it_dest - current_origin);
           optical_distance = optical_distance - parsed_distance;
+
+          o::Real real_parsed_distance =
+              parsed_distance * real_to_2d_optical_distance_ratio;
+          Kokkos::atomic_add(&flux[intersecting_face], real_parsed_distance);
 
           o::LO next_face = get_the_other_adj_face_of_edge(
               bcc_intersected_edge, intersecting_face, edge2faceOffsets,
@@ -990,7 +1002,7 @@ bool search_adjacency_with_bcc(
   return found;
 }
 
-void search(p::Mesh& picparts, PS* ptcls, bool output) {
+void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output) {
   o::Mesh* mesh = picparts.mesh();
   assert(ptcls->nElems() == mesh->nelems());
   Omega_h::LO maxLoops = 100;
@@ -1011,8 +1023,7 @@ void search(p::Mesh& picparts, PS* ptcls, bool output) {
       zone_boundary_sides, maxLoops);
   */
   bool isFound =
-      search_adjacency_with_bcc(*mesh, ptcls, x, xtgt, pid, elem_ids, xpoints_d,
-                                xface_id, zone_boundary_sides, maxLoops);
+      search_adjacency_with_bcc(*mesh, ptcls, x, xtgt, pid, elem_ids, flux);
   fprintf(stderr, "search_mesh (seconds) %f\n", timer.seconds());
   assert(isFound);
   // rebuild the PS to set the new element-to-particle lists
@@ -1021,7 +1032,8 @@ void search(p::Mesh& picparts, PS* ptcls, bool output) {
   fprintf(stderr, "rebuild (seconds) %f\n", timer.seconds());
 }
 
-void tagParentElements(p::Mesh& picparts, PS* ptcls, int loop) {
+void tagParentElements(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux,
+                       int loop) {
   o::Mesh* mesh = picparts.mesh();
   // read from the tag
   o::LOs ehp_nm1 = mesh->get_array<o::LO>(picparts.dim(), "has_particles");
@@ -1205,7 +1217,8 @@ void prettyPrintBB(T min, T max) {
   printf("(%8.4f, %8.4f)\t---------------------|\n", min[0], min[1]);
 }
 
-void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls) {
+void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls,
+                           o::Write<o::Real> flux) {
   o::Mesh* mesh = picparts.mesh();
   // create an array to store the number of particles in each element
   o::Write<o::LO> elmPtclCnt_w(mesh->nelems(), 0);
@@ -1259,6 +1272,27 @@ void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls) {
 
   o::Reals particle_density_r(particle_density);
   mesh->add_tag(o::FACE, "particle_density", 1, o::Reals(particle_density_r));
+}
+
+void computeFluxAndAdd(p::Mesh& picparts, o::Write<o::Real> flux, int iter) {
+  o::Mesh* mesh = picparts.mesh();
+  const auto faces2nodes = mesh->ask_down(o::FACE, o::VERT).ab2b;
+  const auto coords = mesh->coords();
+
+  auto compute_flux = OMEGA_H_LAMBDA(o::LO i) {
+    auto face_nodes = o::gather_verts<3>(faces2nodes, i);
+    o::Few<o::Vector<2>, 3> face_coords =
+        o::gather_vectors<3, 2>(coords, face_nodes);
+    o::Real centroid_r =
+        (face_coords[0][0] + face_coords[1][0] + face_coords[2][0]) / 3.0;
+    o::Real face_area = area_tri(face_coords);
+    o::Real face_flux = flux[i] / (face_area * centroid_r * iter);
+    flux[i] = face_flux;
+  };
+  o::parallel_for(mesh->nfaces(), compute_flux, "compute_flux");
+
+  o::Reals flux_r(flux);
+  mesh->add_tag(o::FACE, "flux", 1, o::Reals(flux_r));
 }
 
 o::Real area_of_2d_mesh(o::Mesh& mesh) {

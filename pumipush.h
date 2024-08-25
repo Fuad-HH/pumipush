@@ -146,7 +146,7 @@ void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output);
 /**
  * Search for the new element for the particles
  */
-void search(p::Mesh& picparts, PS* ptcls, bool output);
+void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output);
 
 /**
  * Tag the parent elements with the number of particles
@@ -203,7 +203,9 @@ OMEGA_H_DEVICE bool all_positive(const Vec a, Omega_h::Real tol = EPSILON) {
 OMEGA_H_DEVICE IntersectionResult find_intersection_point(
     o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2);
 
-void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls);
+void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls,
+                           o::Write<o::Real> flux);
+void computeFluxAndAdd(p::Mesh& picparts, o::Write<o::Real> flux, int iter);
 
 OMEGA_H_DEVICE double distance_between_points(o::Vector<2> p1,
                                               o::Vector<2> p2) {

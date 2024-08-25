@@ -125,13 +125,14 @@ int main(int argc, char* argv[]) {
 #endif
 
   o::LOs elmTags(ne, -1, "elmTagVals");
+  o::Write<o::Real> flux(mesh->nelems(), 0.0);
   mesh->add_tag(o::FACE, "has_particles", 1,
                 elmTags);  // ncomp is number of components
   mesh->add_tag(o::VERT, "avg_density", 1, o::Reals(mesh->nverts(), 0));
   render(picparts, 0, comm_rank);
 
   {
-    computeAvgPtclDensity(picparts, ptcls);
+    computeAvgPtclDensity(picparts, ptcls, flux);
     render(picparts, 0, comm_rank);
   }
 
@@ -166,7 +167,7 @@ int main(int argc, char* argv[]) {
               timer.seconds());
     timer.reset();
     // 3. search for the new element
-    search(picparts, ptcls, false);
+    search(picparts, ptcls, flux, false);
     if (comm_rank == 0)
       fprintf(stderr, "search, rebuild, and transfer (seconds) %f\n",
               timer.seconds());
@@ -177,10 +178,12 @@ int main(int argc, char* argv[]) {
       break;
     }
     // 4. tag the parent elements
-    tagParentElements(picparts, ptcls, iter);
-    computeAvgPtclDensity(picparts, ptcls);
+    // tagParentElements(picparts, ptcls, iter);
+    computeAvgPtclDensity(picparts, ptcls, flux);
     render(picparts, iter, comm_rank);
   }
+  computeFluxAndAdd(picparts, flux, iter - 1);
+  render(picparts, iter, comm_rank);
 
   if (comm_rank == 0) {
     fprintf(stderr, "%d iterations of pseudopush (seconds) %f\n", iter - 1,
