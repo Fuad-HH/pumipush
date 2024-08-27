@@ -73,7 +73,7 @@ int distributeParticlesBasesOnArea(const p::Mesh& picparts, PS::kkLidView ppe,
   return totPtcls;
 }
 
-int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView ppe,
+int distributeParticlesEqually(const p::Mesh& picparts, PS::kkLidView& ppe,
                                const int numPtcls) {
   auto ne = picparts.mesh()->nelems();
   auto numPpe = numPtcls / ne;
@@ -195,11 +195,11 @@ void printTiming(const char* name, double t) {
 
 void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool) {
   Kokkos::Timer timer;
+  timer.reset();
   auto position_d = ptcls->get<0>();
   auto new_position_d = ptcls->get<1>();
 
   double totTime = 0;
-  timer.reset();
   // random_pool_t pool(34973947);
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
@@ -225,7 +225,7 @@ void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool) {
   ps::parallel_for(ptcls, lamb);
 
   totTime += timer.seconds();
-  printTiming("ps push", totTime);
+  printTiming("pseudo 2d push", totTime);
 }
 
 void push(PS* ptcls, int np, double lambda, random_pool_t pool) {
@@ -253,6 +253,9 @@ void push(PS* ptcls, int np, double lambda, random_pool_t pool) {
 }
 
 void updatePtclPositions(PS* ptcls) {
+  Kokkos::Timer timer;
+  timer.reset();
+  double totTime = 0.;
   auto x_ps_d = ptcls->get<0>();
   auto xtgt_ps_d = ptcls->get<1>();
   auto updatePtclPos = PS_LAMBDA(const int&, const int& pid, const bool&) {
@@ -264,9 +267,15 @@ void updatePtclPositions(PS* ptcls) {
     xtgt_ps_d(pid, 2) = 0;
   };
   ps::parallel_for(ptcls, updatePtclPos);
+
+  totTime += timer.seconds();
+  printTiming("updatePtclPosition", totTime);
 }
 
 void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output) {
+  Kokkos::Timer timer;
+  timer.reset();
+  double totTime = 0.0;
   updatePtclPositions(ptcls);
   const int ps_capacity = ptcls->capacity();
   auto ids = ptcls->get<2>();
@@ -293,8 +302,12 @@ void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output) {
     };
     ps::parallel_for(ptcls, printElms);
   }
+
+  totTime = timer.seconds();
+  printTiming("Pumipush rebuild", totTime);
 }
 
+/*
 bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
                          p::Segment<double[3], Kokkos::CudaSpace> x,
                          p::Segment<double[3], Kokkos::CudaSpace> xtgt,
@@ -620,6 +633,7 @@ bool search_adj_elements(o::Mesh& mesh, PS* ptcls,
   }
   return found;
 }
+*/
 
 // OMEGA_H_DEVICE o::LO get_potential_next_face(o::LO e, o::LO face, o::LO
 // &edge2faceFace, o::LO &edge2faceFaceOffsets)
@@ -661,32 +675,37 @@ OMEGA_H_DEVICE bool isPointOnLineSegment(const o::Vector<2>& lineEnd1,
                        point[1] <= max_y && point[1] >= min_y);
   return are_coollinear && are_in_range;
 }
-
+template <class ParticleType, typename Segment3d, typename SegmentInt>
 bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
-                               p::Segment<double[3], Kokkos::CudaSpace> x,
-                               p::Segment<double[3], Kokkos::CudaSpace> xtgt,
-                               p::Segment<int, Kokkos::CudaSpace> pid,
+                               Segment3d x,
+                               Segment3d xtgt,
+                               SegmentInt pid,
                                o::Write<o::LO> elem_ids,
                                o::Write<o::Real> flux) {
+  Kokkos::Timer timer;
+  timer.reset();
+  double totTime = 0.0;
   OMEGA_H_CHECK(mesh.dim() == 2);  // only for pseudo3D now
-  const auto elemArea = o::measure_elements_real(&mesh);
+  const auto& elemArea = o::measure_elements_real(&mesh);
   o::Real tol = p::compute_tolerance_from_area(elemArea);
-  const auto side_is_exposed = o::mark_exposed_sides(&mesh);
-  const auto coords = mesh.coords();
-  const auto faces2nodes = mesh.ask_verts_of(o::FACE);
-  const auto face2faceFace = mesh.ask_dual().ab2b;
-  const auto face2faceOffsets = mesh.ask_dual().a2ab;
-  const auto node2faceFace = mesh.ask_up(o::VERT, o::FACE).ab2b;
-  const auto node2faceOffsets = mesh.ask_up(o::VERT, o::FACE).a2ab;
-  const auto face2edgeEdge = mesh.ask_down(o::FACE, o::EDGE).ab2b;
-  const auto edge2nodeNode =
+  const auto& side_is_exposed = o::mark_exposed_sides(&mesh);
+  const auto& coords = mesh.coords();
+  const auto& faces2nodes = mesh.ask_verts_of(o::FACE);
+  const auto& face2faceFace = mesh.ask_dual().ab2b;
+  const auto& face2faceOffsets = mesh.ask_dual().a2ab;
+  const auto& node2faceFace = mesh.ask_up(o::VERT, o::FACE).ab2b;
+  const auto& node2faceOffsets = mesh.ask_up(o::VERT, o::FACE).a2ab;
+  const auto& face2edgeEdge = mesh.ask_down(o::FACE, o::EDGE).ab2b;
+  const auto& edge2nodeNode =
       mesh.ask_down(o::EDGE, o::VERT).ab2b;  // always 2; offset not needed
-  const auto edge2faceFace = mesh.ask_up(o::EDGE, o::FACE).ab2b;
-  const auto edge2faceOffsets = mesh.ask_up(o::EDGE, o::FACE).a2ab;
-  const auto psCapacity = ptcls->capacity();
+  const auto& edge2faceFace = mesh.ask_up(o::EDGE, o::FACE).ab2b;
+  const auto& edge2faceOffsets = mesh.ask_up(o::EDGE, o::FACE).a2ab;
+  const auto& psCapacity = ptcls->capacity();
 
-  const auto exposed_edges = o::mark_exposed_sides(&mesh);
+  const auto& exposed_edges = o::mark_exposed_sides(&mesh);
 
+  // Come back to these possibly allocate outside of function and resize
+  // FIXME
   o::Write<o::LO> ptcl_done(psCapacity, 0, "search_done");
   o::Write<o::LO> elem_ids_next(psCapacity, -1, "elem_ids_next");
 
@@ -704,6 +723,8 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
   bool found = false;
 
   {  // original search in pumipush does it in a loop but here it is searched
+     //
+#ifdef DEBUG
     auto check_initial_position =
         PS_LAMBDA(const int& e, const int& pid, const int& mask) {
       if (mask > 0 && ptcl_done[pid] == 0) {
@@ -743,6 +764,7 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
       }
     };
     parallel_for(ptcls, check_initial_position, "check_initial_postion");
+#endif
 
     auto search_and_update_destination =
         PS_LAMBDA(const int& e, const int& pid, const int& mask) {
@@ -999,17 +1021,22 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
     };
     o::parallel_for(elem_ids.size(), cp_elm_ids, "copy_elem_ids");
   }
+
+  totTime += timer.seconds();
+  printTiming("Parametric Search", totTime);
   return found;
 }
 
 void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output) {
+  Kokkos::Timer timer;
+  timer.reset();
+  double totTime = 0.0;
   o::Mesh* mesh = picparts.mesh();
   assert(ptcls->nElems() == mesh->nelems());
   Omega_h::LO maxLoops = 100;
   const auto psCapacity = ptcls->capacity();
   o::Write<o::LO> elem_ids(psCapacity, -1, "elem_ids");
   // printf("INFO: Size of elem_ids: %d\n", elem_ids.size());
-  Kokkos::Timer timer;
   auto x = ptcls->get<0>();
   auto xtgt = ptcls->get<1>();
   auto pid = ptcls->get<2>();
@@ -1023,13 +1050,14 @@ void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output) {
       zone_boundary_sides, maxLoops);
   */
   bool isFound =
-      search_adjacency_with_bcc(*mesh, ptcls, x, xtgt, pid, elem_ids, flux);
+      search_adjacency_with_bcc<Particle>(*mesh, ptcls, x, xtgt, pid, elem_ids, flux);
   fprintf(stderr, "search_mesh (seconds) %f\n", timer.seconds());
   assert(isFound);
   // rebuild the PS to set the new element-to-particle lists
-  timer.reset();
   rebuild(picparts, ptcls, elem_ids, output);
   fprintf(stderr, "rebuild (seconds) %f\n", timer.seconds());
+  totTime += timer.seconds();
+  printTiming("Search", totTime);
 }
 
 void tagParentElements(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux,
@@ -1286,7 +1314,7 @@ void computeFluxAndAdd(p::Mesh& picparts, o::Write<o::Real> flux, int iter) {
     o::Real centroid_r =
         (face_coords[0][0] + face_coords[1][0] + face_coords[2][0]) / 3.0;
     o::Real face_area = area_tri(face_coords);
-    o::Real face_flux = flux[i] / (face_area * centroid_r * iter);
+    o::Real face_flux = flux[i] / (face_area *  iter);
     flux[i] = face_flux;
   };
   o::parallel_for(mesh->nfaces(), compute_flux, "compute_flux");

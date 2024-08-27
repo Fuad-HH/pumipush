@@ -502,8 +502,8 @@ OMEGA_H_DEVICE o::LO get_edge_holding_point(const o::Vector<3> bcc,
 }
 
 OMEGA_H_DEVICE o::LO get_the_other_adj_face_of_edge(
-    o::LO edge, o::LO current_el, const o::LOs edge2faceOffsets,
-    const o::LOs edge2faceFace, const o::Read<o::I8> exposed_edges) {
+    o::LO edge, o::LO current_el, const o::LOs& edge2faceOffsets,
+    const o::LOs& edge2faceFace, const o::Read<o::I8>& exposed_edges) {
   o::LO other_face = -1;
   if (edge != -1) {
     // get the other face of the edge if it's on an edge

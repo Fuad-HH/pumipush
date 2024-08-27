@@ -30,6 +30,11 @@ int main(int argc, char* argv[]) {
   }
 
   std::string mesh_file_name = argv[1];
+  bool use_internal_box = false;
+  if (mesh_file_name == "internal_box"){
+	  use_internal_box = true;
+  }
+
   // mesh file name has to be non-empty
   if (mesh_file_name.empty()) {
     std::cerr << "Error: mesh file name cannot be empty\n";
@@ -41,7 +46,12 @@ int main(int argc, char* argv[]) {
   std::string partition_file = argv[2];
 
   // ******************* Mesh Loading ******************* //
-  o::Mesh full_mesh = readMesh(mesh_file_name, lib);
+  o::Mesh full_mesh;
+  if (!use_internal_box){
+  	full_mesh = readMesh(mesh_file_name, lib);
+  }else{
+	full_mesh =  o::build_box(lib.world(), OMEGA_H_SIMPLEX, 1, 1, 1, 300, 300, 0, false);
+  }
   // o::reorder_by_hilbert(&full_mesh);
   // if (comm_rank == 0) std::cout << "Mesh Hilbert reordered\n";
   if (comm_rank == 0) {
@@ -103,11 +113,17 @@ int main(int argc, char* argv[]) {
       distributeParticlesBasesOnArea(picparts, ptcls_per_elem, num_particles);
   printf("INFO: Number of particles set to elements: \t %d in rank %d\n",
          setPtcls, comm_rank);
+  Kokkos::TeamPolicy<ExeSpace> policy;
+#ifdef PP_USE_GPU
+  printf("Using GPU for simulation...");
+  policy = Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, Kokkos::AUTO());
+#else
+  printf("Using CPU for simulation...");
+  policy = Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, 1);
+#endif
 
-  Kokkos::TeamPolicy<ExeSpace> policy =
-      Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>(10000, 32);
   // Sell-C-Sigma particle structure: see the pumipic paper for more details
-  PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 10, ne, setPtcls,
+  PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 1024, ne, setPtcls,
                                        ptcls_per_elem, element_gids);
 #ifdef DEBUG
   printf("INFO: Particle structure created successfully in rank %d\n",
@@ -129,7 +145,7 @@ int main(int argc, char* argv[]) {
   mesh->add_tag(o::FACE, "has_particles", 1,
                 elmTags);  // ncomp is number of components
   mesh->add_tag(o::VERT, "avg_density", 1, o::Reals(mesh->nverts(), 0));
-  render(picparts, 0, comm_rank);
+  //render(picparts, 0, comm_rank);
 
   {
     computeAvgPtclDensity(picparts, ptcls, flux);
@@ -179,8 +195,8 @@ int main(int argc, char* argv[]) {
     }
     // 4. tag the parent elements
     // tagParentElements(picparts, ptcls, iter);
-    computeAvgPtclDensity(picparts, ptcls, flux);
-    render(picparts, iter, comm_rank);
+    //computeAvgPtclDensity(picparts, ptcls, flux);
+    //render(picparts, iter, comm_rank);
   }
   computeFluxAndAdd(picparts, flux, iter - 1);
   render(picparts, iter, comm_rank);

@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(pumipush LANGUAGES C CXX CUDA)
+project(pumipush LANGUAGES C CXX)
 enable_testing()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
   add_definitions(-DDEBUG)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -G")
+endif()
+
+if (PP_USE_GPU MATCHES ON)
+  add_definitions(-DPP_USE_GPU)
 endif()
 
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
@@ -14,9 +18,9 @@ set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 #list(APPEND CMAKE_PREFIX_PATH $oh)
 find_package(pumipic REQUIRED)
 find_package(Omega_h REQUIRED)
-find_package(redev REQUIRED)
+#find_package(redev REQUIRED)
 find_package(MPI REQUIRED)
-find_package(CUDA REQUIRED)
+#find_package(CUDA REQUIRED)
 
 
 #add_executable(pumipush pumipush.cpp)
