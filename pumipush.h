@@ -62,6 +62,7 @@ typedef ps::ParticleStructure<Particle> PS;
 typedef Kokkos::DefaultExecutionSpace ExeSpace;
 typedef Kokkos::Random_XorShift64_Pool<Kokkos::DefaultExecutionSpace>
     random_pool_t;
+using random_state_t = Kokkos::Random_XorShift64<Kokkos::DefaultExecutionSpace>;
 
 struct IntersectionResult {
   bool exists = false;
@@ -82,7 +83,7 @@ OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
  * @brief Generate a random path length using an exponential distribution
  * TODO: make this lambda a mean free path length
  */
-OMEGA_H_DEVICE double random_path_length(double lambda, random_pool_t pool);
+//OMEGA_H_DEVICE double random_path_length(double lambda, const random_state_t& pool);
 
 o::Mesh readMesh(std::string meshFile, o::Library& lib);
 
@@ -129,8 +130,8 @@ void push(PS* ptcls, int np, double lambda, random_pool_t pool);
 /**
  * Get a random direction uniformly distributed on the unit sphere
  */
-OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
-                                                  random_pool_t random_pool);
+//OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
+//                                                  const random_state_t& random_pool);
 
 /**
  * Update the particle positions to the new target positions
@@ -293,17 +294,15 @@ OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
 }
 
 OMEGA_H_DEVICE o::Vector<3> sampleRandomDirection(const double A,
-                                                  random_pool_t random_pool) {
+                                                  random_state_t& gen) {
   // ref
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#isotropic-angular-distribution
   // ref
   // std::random_device rd;
   // std::mt19937 gen(0);
   // std::uniform_real_distribution<> dis(0, 1);
-  auto gen = random_pool.get_state();
   double theta = gen.drand(0., 2. * M_PI);
   double phi = Kokkos::acos(2 * gen.drand(0., 1.) - 1);
-  random_pool.free_state(gen);
   // double mu = 2 * rn - 1;
   //// cosine in the particles incident direction
   // double mu_lab = (1 + A * mu) / std::sqrt(1 + 2 * A * mu + A * A);
@@ -355,12 +354,10 @@ OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3> cartesian,
   cyl[2] = cartesian[2];
 }
 
-OMEGA_H_DEVICE double random_path_length(double lambda, random_pool_t pool) {
+OMEGA_H_DEVICE double random_path_length(double lambda, random_state_t& gen) {
   // ref:
   // https://docs.openmc.org/en/stable/methods/neutron_physics.html#sampling-distance-to-next-collision
-  auto gen = pool.get_state();
   double rn = gen.drand(0., 1.);
-  pool.free_state(gen);
   double l = -std::log(rn) * lambda;
   return l;
 }

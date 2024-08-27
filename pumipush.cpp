@@ -203,14 +203,14 @@ void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool) {
   // random_pool_t pool(34973947);
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
-      double distance = random_path_length(lambda, pool);
+      auto random_state = pool.get_state(); 
+      double distance = random_path_length(lambda, random_state);
       // printf("Push distance for particle %d: %f\n", pid, distance);
       o::Vector<3> cyl_coords = {position_d(pid, 0), position_d(pid, 1),
                                  position_d(pid, 2)};
       o::Vector<3> cart_coords;
       cylindrical2cartesian(cyl_coords, cart_coords);
-
-      o::Vector<3> direction_vec = sampleRandomDirection(1, pool);
+      o::Vector<3> direction_vec = sampleRandomDirection(1, random_state);
       o::Vector<3> new_position_cart = cart_coords + (distance * direction_vec);
       cartesian2cylindrical(new_position_cart, cyl_coords);
       // printf("INFO: Old position: %.16f %.16f %.16f\n", position_d(pid, 0),
@@ -220,6 +220,7 @@ void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool) {
       new_position_d(pid, 0) = cyl_coords[0];
       new_position_d(pid, 1) = cyl_coords[1];
       new_position_d(pid, 2) = cyl_coords[2];
+      pool.free_state(random_state); 
     }
   };
   ps::parallel_for(ptcls, lamb);
@@ -239,11 +240,13 @@ void push(PS* ptcls, int np, double lambda, random_pool_t pool) {
   auto lamb = PS_LAMBDA(const int& e, const int& pid, const int& mask) {
     if (mask) {
       // fp_t dir[3];
-      double distance = random_path_length(lambda, pool);
-      o::Vector<3> disp_d = sampleRandomDirection(1, pool);
+      auto state = pool.get_state();
+      double distance = random_path_length(lambda, state);
+      o::Vector<3> disp_d = sampleRandomDirection(1, state);
       new_position_d(pid, 0) = position_d(pid, 0) + distance * disp_d[0];
       new_position_d(pid, 1) = position_d(pid, 1) + distance * disp_d[1];
       new_position_d(pid, 2) = position_d(pid, 2) + distance * disp_d[2];
+      pool.free_state(state);
     }
   };
   ps::parallel_for(ptcls, lamb);
