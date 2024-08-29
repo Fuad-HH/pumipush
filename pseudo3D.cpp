@@ -50,7 +50,9 @@ int main(int argc, char* argv[]) {
   if (!use_internal_box){
   	full_mesh = readMesh(mesh_file_name, lib);
   }else{
-	full_mesh =  o::build_box(lib.world(), OMEGA_H_SIMPLEX, 1, 1, 1, 300, 300, 0, false);
+	int nx = atoi(argv[6]);
+	int ny = atoi(argv[7]);
+	full_mesh =  o::build_box(lib.world(), OMEGA_H_SIMPLEX, 1, 1, 1, nx, ny, 0, false);
   }
   // o::reorder_by_hilbert(&full_mesh);
   // if (comm_rank == 0) std::cout << "Mesh Hilbert reordered\n";
@@ -123,8 +125,9 @@ int main(int argc, char* argv[]) {
 #endif
 
   // Sell-C-Sigma particle structure: see the pumipic paper for more details
-  PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 1024, ne, setPtcls,
-                                       ptcls_per_elem, element_gids);
+  //PS* ptcls = new SellCSigma<Particle>(policy, INT_MAX, 1024, ne, setPtcls,
+  //                                     ptcls_per_elem, element_gids);
+  PS* ptcls = new p::DPS<Particle>(policy, ne, setPtcls, ptcls_per_elem, element_gids);
 #ifdef DEBUG
   printf("INFO: Particle structure created successfully in rank %d\n",
          comm_rank);
@@ -154,14 +157,19 @@ int main(int argc, char* argv[]) {
 
   Kokkos::Timer timer;
   Kokkos::Timer fullTimer;
+  Kokkos::Timer iterTimer;
 
-  int iter;  // iteration number
+  int iter=0;  // iteration number
   int np;    //
-  int ps_np;
+  int ps_np=0;
   random_pool_t rand_pool(1);
+  
 
   // ******************* Monte Carlo Transport Simulation ******************* //
-  for (iter = 1; iter <= num_iterations; ++iter) {
+  //for (iter = 1; iter <= num_iterations; ++iter) {
+  do {
+    ++iter;
+    iterTimer.reset();
     MPI_Barrier(MPI_COMM_WORLD);
     if (comm_rank == 0) printf("-----------------------------\n");
     printf("Iteration: %d Rank: %d\n", iter, comm_rank);
@@ -189,15 +197,23 @@ int main(int argc, char* argv[]) {
               timer.seconds());
     ps_np = ptcls->nPtcls();
     MPI_Allreduce(&ps_np, &np, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+
+    double iter_time = iterTimer.seconds();
+    printf("TIME: Iteration %d took %f seconds for %d particles(time for 1000 particles=%f)\n", iter, iter_time, ps_np, (1000.0 * iter_time)/ps_np);
     if (np == 0) {
       fprintf(stderr, "No particles remain... exiting push loop\n");
       break;
+    }
+    if (iter >= num_iterations){
+	    printf("Iter %d is done and it's the max iter (%d)", iter, num_iterations);
+	    break;
     }
     // 4. tag the parent elements
     // tagParentElements(picparts, ptcls, iter);
     //computeAvgPtclDensity(picparts, ptcls, flux);
     //render(picparts, iter, comm_rank);
-  }
+  } while(ps_np > 0.01*setPtcls);
   computeFluxAndAdd(picparts, flux, iter - 1);
   render(picparts, iter, comm_rank);
 

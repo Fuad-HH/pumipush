@@ -210,8 +210,8 @@ void pseudo2Dpush(PS* ptcls, double lambda, random_pool_t pool) {
                                  position_d(pid, 2)};
       o::Vector<3> cart_coords;
       cylindrical2cartesian(cyl_coords, cart_coords);
-      o::Vector<3> direction_vec = sampleRandomDirection(1, random_state);
-      o::Vector<3> new_position_cart = cart_coords + (distance * direction_vec);
+      const o::Vector<3>& direction_vec = sampleRandomDirection(1, random_state);
+      const o::Vector<3>& new_position_cart = cart_coords + (distance * direction_vec);
       cartesian2cylindrical(new_position_cart, cyl_coords);
       // printf("INFO: Old position: %.16f %.16f %.16f\n", position_d(pid, 0),
       //        position_d(pid, 1), position_d(pid, 2));
@@ -795,9 +795,9 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
         o::Real real_to_2d_optical_distance_ratio =
             total_real_optical_distance / total_optical_distance;
 
-        auto bcc_dest =
+        const auto& bcc_dest =
             o::barycentric_from_global<2, 2>(dest_rz, current_el_vert_coords);
-        auto bcc_origin =
+        const auto& bcc_origin =
             o::barycentric_from_global<2, 2>(origin_rz, current_el_vert_coords);
         // printf("INFO: BCC origin: %.16f %.16f %.16f\n", bcc_origin[0],
         //        bcc_origin[1], bcc_origin[2]);
@@ -828,8 +828,8 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
                              : third_vert;
           }
           OMEGA_H_CHECK(third_vert != -1);
-          o::Vector<2> third_vert_coords = o::get_vector<2>(coords, third_vert);
-          auto edge_coords = o::gather_vectors<2, 2>(coords, edge_verts);
+          const o::Vector<2>& third_vert_coords = o::get_vector<2>(coords, third_vert);
+          const auto& edge_coords = o::gather_vectors<2, 2>(coords, edge_verts);
           // ref: https://math.stackexchange.com/a/162733
           bool is_on_same_side_of_line =
               ((edge_coords[0][1] - edge_coords[1][1]) *
@@ -862,24 +862,24 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
           // printf("Search: Particle %d in element %d: Current origin: %f,
           // %f\n", pid, intersecting_face, current_origin[0],
           // current_origin[1]);
-          const auto intersecting_face_verts =
+          const auto& intersecting_face_verts =
               o::gather_verts<3>(faces2nodes, intersecting_face);
-          const auto intersecting_face_vert_coords =
+          const auto& intersecting_face_vert_coords =
               o::gather_vectors<3, 2>(coords, intersecting_face_verts);
           const o::Few<o::LO, 3> intersecting_face_edges = {
               face2edgeEdge[3 * intersecting_face],
               face2edgeEdge[3 * intersecting_face + 1],
               face2edgeEdge[3 * intersecting_face + 2]};
-          const auto bcc_origin_intFace = o::barycentric_from_global<2, 2>(
+          const auto& bcc_origin_intFace = o::barycentric_from_global<2, 2>(
               current_origin, intersecting_face_vert_coords);
-          const auto bcc_dest_intFace = o::barycentric_from_global<2, 2>(
+          const auto& bcc_dest_intFace = o::barycentric_from_global<2, 2>(
               dest_rz, intersecting_face_vert_coords);
 
           o::LO bcc_intersected_edge = -1;
           o::Vector<3> bcc_intersected_point = {0.0, 0.0, 0.0};
           bool intersected = false;
           for (int i = 0; i < 3; i++) {
-            auto intersection_result = find_intersection_with_bcc(
+            const auto& intersection_result = find_intersection_with_bcc(
                 bcc_origin_intFace, bcc_dest_intFace, i);
             o::LO temp_edge = intersecting_face_edges[(i + 1) % 3];
             bool not_previous_edge = temp_edge != origin_on_edge;
@@ -914,7 +914,7 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
           // OMEGA_H_CHECK(!all_positive(bcc_dest_intFace, 0.0) &&
           // !intersected);
 #endif
-          auto intersected_point = barycentric2real(
+          const auto& intersected_point = barycentric2real(
               intersecting_face_vert_coords, bcc_intersected_point);
           o::Vector<2> cur_it_dest =
               (intersected) ? intersected_point : dest_rz;

@@ -77,7 +77,7 @@ Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace> TeamPolicyAutoSelect(
     int league_size, int team_size);
 
 OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
-                                             o::Few<o::LO, 4> v);
+                                             const o::Few<o::LO, 4>& v);
 
 /**
  * @brief Generate a random path length using an exponential distribution
@@ -186,13 +186,13 @@ OMEGA_H_DEVICE void get_tet_centroid(const o::LOs& cells2nodes, o::LO e,
                                      const o::Reals& nodes2coords,
                                      o::Few<o::Real, 3>& center);
 
-OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
+OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3>& cyl,
                                           o::Vector<3>& cartesian);
 
-OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3> cartesian,
+OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3>& cartesian,
                                           o::Vector<3>& cyl);
 template <class Vec>
-OMEGA_H_DEVICE bool all_positive(const Vec a, Omega_h::Real tol = EPSILON) {
+OMEGA_H_DEVICE bool all_positive(const Vec& a, Omega_h::Real tol = EPSILON) {
   auto isPos = 1;
   for (Omega_h::LO i = 0; i < a.size(); ++i) {
     const auto gtez = Omega_h::are_close(a[i], 0.0, tol, tol) || a[i] > 0;
@@ -202,14 +202,14 @@ OMEGA_H_DEVICE bool all_positive(const Vec a, Omega_h::Real tol = EPSILON) {
 }
 
 OMEGA_H_DEVICE IntersectionResult find_intersection_point(
-    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2);
+    const o::Few<o::Vector<2>, 2>& line1, const o::Few<o::Vector<2>, 2>& line2);
 
 void computeAvgPtclDensity(p::Mesh& picparts, PS* ptcls,
                            o::Write<o::Real> flux);
 void computeFluxAndAdd(p::Mesh& picparts, o::Write<o::Real> flux, int iter);
 
-OMEGA_H_DEVICE double distance_between_points(o::Vector<2> p1,
-                                              o::Vector<2> p2) {
+OMEGA_H_DEVICE double distance_between_points(const o::Vector<2>& p1,
+                                              const o::Vector<2>& p2) {
   return o::norm(p1 - p2);
 }
 
@@ -256,7 +256,7 @@ OMEGA_H_DEVICE void search_through_mesh(const o::Mesh& mesh, o::Vector<3> x) {
 }
 
 OMEGA_H_DEVICE IntersectionResult find_intersection_point(
-    o::Few<o::Vector<2>, 2> line1, o::Few<o::Vector<2>, 2> line2) {
+    const o::Few<o::Vector<2>, 2>& line1, const o::Few<o::Vector<2>, 2>& line2) {
   IntersectionResult result;
   auto b = line2[0] - line1[0];
   o::Matrix<2, 2> A;
@@ -289,7 +289,7 @@ OMEGA_H_DEVICE bool counter_clockwise(const Omega_h::Vector<2>& a,
 
 // HACK to avoid having an unguarded comma in the PS PARALLEL macro
 OMEGA_H_DEVICE o::Matrix<3, 4> gatherVectors(o::Reals const& a,
-                                             o::Few<o::LO, 4> v) {
+                                             const o::Few<o::LO, 4>& v) {
   return o::gather_vectors<4, 3>(a, v);
 }
 
@@ -338,7 +338,7 @@ OMEGA_H_DEVICE void get_tri_centroid(const o::LOs& cells2nodes, o::LO e,
   center = average(cell_nodes2coords);
 }
 
-OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
+OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3>& cyl,
                                           o::Vector<3>& cartesian) {
   OMEGA_H_CHECK(cyl.size() == 3);
 
@@ -347,7 +347,7 @@ OMEGA_H_DEVICE void cylindrical2cartesian(const o::Vector<3> cyl,
   cartesian[2] = cyl[2];
 }
 
-OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3> cartesian,
+OMEGA_H_DEVICE void cartesian2cylindrical(const o::Vector<3>& cartesian,
                                           o::Vector<3>& cyl) {
   cyl[0] = std::sqrt(cartesian[0] * cartesian[0] + cartesian[1] * cartesian[1]);
   cyl[1] = std::atan2(cartesian[1], cartesian[0]);
@@ -437,7 +437,7 @@ OMEGA_H_DEVICE o::Real get_dest_theta(const o::Vector<3>& origin_rThz,
 }
 
 OMEGA_H_DEVICE o::Few<o::Vector<3>, 3> barycentric_basis(
-    const o::Few<o::Vector<2>, 3> tri_verts) {
+    const o::Few<o::Vector<2>, 3>& tri_verts) {
   o::Few<o::Vector<3>, 3> basis;
   for (int i = 0; i < 3; i++) {
     basis[0][i] = tri_verts[i][0];
@@ -448,7 +448,7 @@ OMEGA_H_DEVICE o::Few<o::Vector<3>, 3> barycentric_basis(
 }
 
 OMEGA_H_DEVICE o::Vector<2> barycentric2real(
-    const o::Few<o::Vector<2>, 3> tri_verts, const o::Vector<3> bary) {
+    const o::Few<o::Vector<2>, 3>& tri_verts, const o::Vector<3>& bary) {
   o::Few<o::Vector<3>, 3> basis = barycentric_basis(tri_verts);
   o::Vector<2> real_coords;
   // real_coords = basis * bary;
@@ -460,7 +460,7 @@ OMEGA_H_DEVICE o::Vector<2> barycentric2real(
 }
 
 OMEGA_H_DEVICE IntersectionBccResult find_intersection_with_bcc(
-    const o::Vector<3> origin_bcc, const o::Vector<3> dest_bcc, int edge) {
+    const o::Vector<3>& origin_bcc, const o::Vector<3>& dest_bcc, int edge) {
   o::Vector<3> bcc_vector = dest_bcc - origin_bcc;
   o::Real u = origin_bcc[edge] / (origin_bcc[edge] - dest_bcc[edge]);
   o::Vector<3> ray_intersect_bcc = origin_bcc + u * bcc_vector;
@@ -480,7 +480,7 @@ OMEGA_H_DEVICE IntersectionBccResult find_intersection_with_bcc(
  * @param origin_bcc
  * @details checks if bcc is all postive and only one can be 0 at a time
  */
-OMEGA_H_DEVICE void check_origin_bcc_validity(const o::Vector<3> origin_bcc) {
+OMEGA_H_DEVICE void check_origin_bcc_validity(const o::Vector<3>& origin_bcc) {
   OMEGA_H_CHECK(all_positive(origin_bcc, EPSILON));
   o::LO n_edges = 0;
   for (int i = 0; i < 3; i++) {
@@ -489,8 +489,8 @@ OMEGA_H_DEVICE void check_origin_bcc_validity(const o::Vector<3> origin_bcc) {
   OMEGA_H_CHECK(n_edges <= 1);
 }
 
-OMEGA_H_DEVICE o::LO get_edge_holding_point(const o::Vector<3> bcc,
-                                            o::Few<o::LO, 3> el_edges) {
+OMEGA_H_DEVICE o::LO get_edge_holding_point(const o::Vector<3>& bcc,
+                                            const o::Few<o::LO, 3>& el_edges) {
   o::LO edge = -1;
   for (int i = 0; i < 3; i++) {
     edge = (std::abs(bcc[i]) < EPSILON) ? el_edges[(i + 1) % 3] : edge;
@@ -519,7 +519,7 @@ OMEGA_H_DEVICE o::LO get_the_other_adj_face_of_edge(
 /**
  * Get triangle area
  */
-OMEGA_H_DEVICE o::Real area_tri(o::Few<o::Vector<2>, 3> tri_verts) {
+OMEGA_H_DEVICE o::Real area_tri(const o::Few<o::Vector<2>, 3>& tri_verts) {
   o::Few<o::Vector<2>, 2> basis22 = {tri_verts[1] - tri_verts[0],
                                      tri_verts[2] - tri_verts[0]};
   auto area = o::triangle_area_from_basis(basis22);
