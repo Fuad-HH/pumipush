@@ -163,6 +163,7 @@ int main(int argc, char* argv[]) {
   int np;    //
   int ps_np=0;
   random_pool_t rand_pool(1);
+  o::Write<o::LO> elem_ids(ptcls->capacity(), -1, "elem_ids");
   
 
   // ******************* Monte Carlo Transport Simulation ******************* //
@@ -191,7 +192,7 @@ int main(int argc, char* argv[]) {
               timer.seconds());
     timer.reset();
     // 3. search for the new element
-    search(picparts, ptcls, flux, false);
+    search(picparts, ptcls, flux, elem_ids, false);
     if (comm_rank == 0)
       fprintf(stderr, "search, rebuild, and transfer (seconds) %f\n",
               timer.seconds());

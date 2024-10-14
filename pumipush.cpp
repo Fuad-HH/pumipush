@@ -1030,7 +1030,7 @@ bool search_adjacency_with_bcc(o::Mesh& mesh, PS* ptcls,
   return found;
 }
 
-void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output) {
+void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real>& flux, o::Write<o::LO>& elem_ids, bool output) {
   Kokkos::Timer timer;
   timer.reset();
   double totTime = 0.0;
@@ -1038,15 +1038,15 @@ void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output) {
   assert(ptcls->nElems() == mesh->nelems());
   Omega_h::LO maxLoops = 100;
   const auto psCapacity = ptcls->capacity();
-  o::Write<o::LO> elem_ids(psCapacity, -1, "elem_ids");
+  //o::Write<o::LO> elem_ids(psCapacity, -1, "elem_ids");
   // printf("INFO: Size of elem_ids: %d\n", elem_ids.size());
   auto x = ptcls->get<0>();
   auto xtgt = ptcls->get<1>();
   auto pid = ptcls->get<2>();
-  o::Write<o::Real> xpoints_d(3 * psCapacity, "intersection points");
-  o::Write<o::LO> xface_id(psCapacity, "intersection faces");
+  //o::Write<o::Real> xpoints_d(3 * psCapacity, "intersection points");
+  //o::Write<o::LO> xface_id(psCapacity, "intersection faces");
   // all sides are considered zone boundaries
-  o::Read<o::I8> zone_boundary_sides(mesh->nfaces(), 1);
+ // o::Read<o::I8> zone_boundary_sides(mesh->nfaces(), 1);
   /*
   bool isFound = p::search_mesh_with_zone<Particle>(
       *mesh, ptcls, x, xtgt, pid, elem_ids, xpoints_d, xface_id,

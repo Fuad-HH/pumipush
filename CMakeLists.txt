@@ -6,6 +6,8 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
   add_definitions(-DDEBUG)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -G")
 endif()
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lineinfo")
 
 if (PP_USE_GPU MATCHES ON)
   add_definitions(-DPP_USE_GPU)

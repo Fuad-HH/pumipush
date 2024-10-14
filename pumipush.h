@@ -147,7 +147,7 @@ void rebuild(p::Mesh& picparts, PS* ptcls, o::LOs elem_ids, const bool output);
 /**
  * Search for the new element for the particles
  */
-void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real> flux, bool output);
+void search(p::Mesh& picparts, PS* ptcls, o::Write<o::Real>& flux, o::Write<o::LO>& elem_ids, bool output);
 
 /**
  * Tag the parent elements with the number of particles
