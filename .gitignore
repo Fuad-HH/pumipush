@@ -11,3 +11,6 @@ meshes/*x_t
 meshes/*.smd
 meshes/*.sms
 meshes/likeTokamaks.geo
+dagmcRun/
+meshes/WEST_LCPP/
+meshes/square_mesh_edges.txt
