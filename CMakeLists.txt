@@ -2,12 +2,19 @@ cmake_minimum_required(VERSION 3.20)
 project(pumipush LANGUAGES C CXX)
 enable_testing()
 
-if(CMAKE_BUILD_TYPE MATCHES Debug)
+string(TOUPPER ${CMAKE_BUILD_TYPE} BUILD_TYPE)
+if(BUILD_TYPE MATCHES DEBUG)
+  string(REPLACE "-lineinfo" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   add_definitions(-DDEBUG)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -G")
 endif()
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lineinfo")
+if (BUILD_TYPE MATCHES RELEASE)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+endif()
+if (BUILD_TYPE MATCHES RELWITHDEBINFO)
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lineinfo")
+endif()
 
 if (PP_USE_GPU MATCHES ON)
   add_definitions(-DPP_USE_GPU)
@@ -26,7 +33,7 @@ find_package(MPI REQUIRED)
 
 
 #add_executable(pumipush pumipush.cpp)
-add_executable(pseudoMC pseudoMC.cpp pumipush.cpp)
+add_executable(pseudoMC pseudoMC.cpp)
 add_executable(pseudo3D pseudo3D.cpp pumipush.cpp)
 #target_link_libraries(pseudoMC PUBLIC pumipic::pumipic Omega_h::omega_h redev::redev MPI::MPI_CXX)
 target_link_libraries(pseudoMC PUBLIC pumipic::pumipic Omega_h::omega_h MPI::MPI_CXX)
@@ -41,4 +48,4 @@ add_test(
     NAME pumipush-test 
     COMMAND pumipush-test
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests
-    )
+)
