@@ -10,17 +10,21 @@
 #include <Omega_h_macros.h>
 #include <ppMacros.h>
 
+#include <Kokkos_Core.hpp>
 #include <Omega_h_array_ops.hpp>
 #include <Omega_h_bbox.hpp>
+#include <Omega_h_defines.hpp>
 #include <Omega_h_fail.hpp>
 #include <Omega_h_file.hpp>
 #include <Omega_h_for.hpp>
 #include <Omega_h_library.hpp>
 #include <Omega_h_mark.hpp>
 #include <Omega_h_mesh.hpp>
+#include <memory>
 #include <pumipic_adjacency.hpp>
 #include <pumipic_adjacency.tpp>
-#include <pumipic_kktypes.hpp>
+#include <variant>
+// #include <pumipic_kktypes.hpp>
 #include <pumipic_mesh.hpp>
 #include <pumipic_ptcl_ops.hpp>
 #include <random>
@@ -259,6 +263,24 @@ o::Mesh readMesh(const char *meshFileName, o::Library &lib) {
   }
 }
 
+// void apply_reflective_boundary_condition(o::Mesh &mesh, PS *ptcls,
+//                                          o::Write<o::LO> &elem_ids,
+//                                          o::Write<o::LO> &ptcl_done,
+//                                          o::Write<o::LO> &lastExit,
+//                                          o::Write<o::LO> &xFace) {
+//   const auto &side_is_exposed = o::mark_exposed_sides(&mesh);
+//
+//   auto apply_reflective_bc = PS_LAMBDA(const int e, const int pid, const int
+//   mask) {
+//     if (mask > 0 && !ptcl_done[pid]) {
+//       assert(lastExit[pid] != -1);
+//
+//     }
+//
+//
+//
+// }
+
 void apply_vacuum_boundary_condition(o::Mesh &mesh, PS *ptcls,
                                      o::Write<o::LO> &elem_ids,
                                      o::Write<o::LO> &ptcl_done,
@@ -308,15 +330,87 @@ void move_to_new_element(o::Mesh &mesh, PS *ptcls, o::Write<o::LO> &elem_ids,
   parallel_for(ptcls, set_next_element, "pumipic_set_next_element");
 }
 
-void handle_particle_at_elem_boundary(o::Mesh &mesh, PS *ptcls,
-                                      o::Write<o::LO> &elem_ids,
-                                      o::Write<o::LO> &inter_faces,
-                                      o::Write<o::LO> &lastExit,
-                                      o::Write<o::Real> &inter_points,
-                                      o::Write<o::LO> &ptcl_done) {
-  apply_vacuum_boundary_condition(mesh, ptcls, elem_ids, ptcl_done, lastExit,
-                                  inter_faces);
-  move_to_new_element(mesh, ptcls, elem_ids, ptcl_done, lastExit);
+struct ParticleAtBoundary {
+  ParticleAtBoundary(o::LO nelems, o::LO capacity)
+      : flux_(nelems, 0.0, "flux"),
+        prev_xpoint_(capacity * 3, 0.0, "prev_xpoint") {
+    printf(
+        "[INFO] Particle handler at boundary with %d elements and %d "
+        "particles\n",
+        flux_.size(), prev_xpoint_.size());
+  }
+
+  void operator()(o::Mesh &mesh, PS *ptcls, o::Write<o::LO> &elem_ids,
+                  o::Write<o::LO> &inter_faces, o::Write<o::LO> &lastExit,
+                  o::Write<o::Real> &inter_points, o::Write<o::LO> &ptcl_done) {
+    apply_vacuum_boundary_condition(mesh, ptcls, elem_ids, ptcl_done, lastExit,
+                                    inter_faces);
+    move_to_new_element(mesh, ptcls, elem_ids, ptcl_done, lastExit);
+    evaluateFlux(ptcls, inter_points);
+  }
+
+  void updatePrevXPoint(o::Write<o::Real> &xpoints) {
+    OMEGA_H_CHECK_PRINTF(
+        xpoints.size() <= prev_xpoint_.size() && prev_xpoint_.size() != 0,
+        "xpoints size %d is greater than prev_xpoint size %d\n", xpoints.size(),
+        prev_xpoint_.size());
+    auto prev_xpoint = prev_xpoint_;
+    auto update = OMEGA_H_LAMBDA(o::LO i) { prev_xpoint[i] = xpoints[i]; };
+    o::parallel_for(xpoints.size(), update, "update previous xpoints");
+  }
+
+  void evaluateFlux(PS *ptcls, o::Write<o::Real> &xpoints);
+  o::Reals normalizeFlux(o::Mesh &mesh);
+
+  o::Write<o::Real> flux_;
+  o::Write<o::Real> prev_xpoint_;
+};
+
+void ParticleAtBoundary::evaluateFlux(PS *ptcls, o::Write<o::Real> &xpoints) {
+  o::Real total_particles = ptcls->nPtcls();
+  auto prev_xpoint = prev_xpoint_;
+  auto flux = flux_;
+
+  auto evaluate_flux =
+      PS_LAMBDA(const int &e, const int &pid, const int &mask) {
+    if (mask > 0) {
+      o::Vector<3> dest = {xpoints[pid * 3], xpoints[pid * 3 + 1],
+                           xpoints[pid * 3 + 2]};
+      o::Vector<3> orig = {prev_xpoint[pid * 3], prev_xpoint[pid * 3 + 1],
+                           prev_xpoint[pid * 3 + 2]};
+
+      o::Real parsed_dist = o::norm(dest - orig);  // / total_particles;
+      Kokkos::atomic_add(&flux[e], parsed_dist);
+    }
+  };
+  p::parallel_for(ptcls, evaluate_flux, "flux evaluation loop");
+}
+
+o::Reals ParticleAtBoundary::normalizeFlux(o::Mesh &mesh) {
+  const o::LO nelems = mesh.nelems();
+  const auto &el2n = mesh.ask_down(o::REGION, o::VERT).ab2b;
+  const auto &coords = mesh.coords();
+
+  auto flux = flux_;
+
+  o::Write<o::Real> tet_volumes(flux_.size(), -1.0, "tet_volumes");
+  o::Write<o::Real> normalized_flux(flux_.size(), -1.0, "normalized flux");
+
+  auto normalize_flux_with_volume = OMEGA_H_LAMBDA(o::LO elem_id) {
+    const auto elem_verts = o::gather_verts<4>(el2n, elem_id);
+    const auto elem_vert_coords = o::gather_vectors<4, 3>(coords, elem_verts);
+
+    auto b = o::simplex_basis<3, 3>(elem_vert_coords);
+    auto volume = o::simplex_size_from_basis(b);
+
+    tet_volumes[elem_id] = volume;
+    normalized_flux[elem_id] = flux[elem_id] / volume;
+  };
+  o::parallel_for(tet_volumes.size(), normalize_flux_with_volume,
+                  "normalize flux");
+
+  mesh.add_tag(o::REGION, "volume", 1, o::Reals(tet_volumes));
+  return o::Reals(normalized_flux);
 }
 
 void print_exposed_faces(p::Mesh &picparts) {
@@ -342,7 +436,8 @@ void print_exposed_faces(p::Mesh &picparts) {
 }
 
 bool search(p::Mesh &picparts, PS *ptcls, o::Write<o::LO> &elem_ids,
-            o::Write<o::Real> &inter_points, o::Write<o::LO> &inter_faces) {
+            o::Write<o::Real> &inter_points, o::Write<o::LO> &inter_faces,
+            ParticleAtBoundary &handle_particle_at_elem_boundary) {
   o::Mesh *mesh = picparts.mesh();
   OMEGA_H_CHECK(ptcls->nElems() == mesh->nelems());
   Omega_h::LO maxLoops = 10000;
@@ -355,6 +450,7 @@ bool search(p::Mesh &picparts, PS *ptcls, o::Write<o::LO> &elem_ids,
   bool isFound = p::particle_search(*mesh, ptcls, x, xtgt, pid, elem_ids,
                                     inter_faces, inter_points, maxLoops,
                                     handle_particle_at_elem_boundary);
+  handle_particle_at_elem_boundary.updatePrevXPoint(inter_points);
 
   rebuild(picparts, ptcls, elem_ids);
   return isFound;
@@ -418,6 +514,8 @@ int main(int argc, char **argv) {
   o::Write<o::Real> inter_points;
   o::Write<o::LO> inter_faces;
 
+  ParticleAtBoundary particleAtBoundaryManager(ne, capacity);
+
   do {
     Kokkos::fence();
     np = ptcls->nPtcls();
@@ -430,7 +528,8 @@ int main(int argc, char **argv) {
     push_ptcls(ptcls, lambda, random_pool);
     Kokkos::fence();
     MPI_Barrier(MPI_COMM_WORLD);
-    bool found = search(picparts, ptcls, elem_ids, inter_points, inter_faces);
+    bool found = search(picparts, ptcls, elem_ids, inter_points, inter_faces,
+                        particleAtBoundaryManager);
     if (!found) {
       printf("[ERROR] Particle search failed\n");
       exit(1);
@@ -456,7 +555,13 @@ int main(int argc, char **argv) {
       "total.\n",
       iter, time);
 
-  o::vtk::write_parallel("results.vtk", mesh, 3);
+  const char *result_vtk_fname = "results.vtk";
+  printf("[STATUS] Normalizing the flux with volume and writing it to %s\n",
+         result_vtk_fname);
+  o::Reals flux = particleAtBoundaryManager.normalizeFlux(*mesh);
+  mesh->add_tag(o::REGION, "flux", 1, flux);
+
+  o::vtk::write_parallel(result_vtk_fname, mesh, 3);
 
   delete ptcls;
   return 0;
