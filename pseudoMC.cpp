@@ -502,7 +502,7 @@ int main(int argc, char **argv) {
   printf("[TIME] Time to initialize simulation: %f\n", time);
 
   // ******************* Monte Carlo Transport Simulation ******************* //
-  o::LO maxIter = 1000;
+  o::LO maxIter = 100000;
   o::LO np;
   o::LO iter = 0;
   o::Real timePerIter = 0.0;
@@ -547,7 +547,7 @@ int main(int argc, char **argv) {
         iter, comm_rank, np, timePerIter);
 
     iter++;
-  } while (np > 0.01 * numPtcls && iter < maxIter);
+  } while (np > 0.0001 * numPtcls && iter < maxIter);
 
   time = timer.seconds();
   printf(

@@ -14,3 +14,8 @@ meshes/likeTokamaks.geo
 dagmcRun/
 meshes/WEST_LCPP/
 meshes/square_mesh_edges.txt
+tests/assets/square2el.cub
+tests/assets/square4el.geo
+*.html
+*.csv
+python/
