@@ -1,0 +1,261 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{tcolorbox}
+\usepackage[margin=1in]{geometry}
+\usepackage{subcaption}
+\usepackage{url}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{tikz}
+
+%%%%%%%%%%%%%%%%%%%%%%% HEADER %%%%%%%%%%%%%%%%%%%%%%%%
+
+\title{Event Based Monte Carlo Using Pumi-PIC}
+\author{Fuad Hasan}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+%%%%%%%%%%%%%%%%%%%%% Mesh Description %%%%%%%%%%%%%%%%
+
+\section{Mesh Description}
+Two different meshes are used. DAGMC uses an \textit{unstructured surface mesh} for particle transport
+and a \textit{volume mesh} for tallying flux using the \textit{track-length} estimator.
+Mesh properties are shown in Table \ref{tab:mesh_properties}. The volume mesh is then converted to \texttt{gmsh} format
+using the \texttt{mbconvert} utility that comes with MOAB and used in the pumipush code.
+
+\begin{table}[h!]
+	\centering
+	\begin{tabular}{c|c}
+		\hline
+		\textbf{Parameter}                  & \textbf{Value}                                  \\  \hline \hline
+		Software used                       & Cubit                                           \\
+		\hline
+		Mesh Type                           & Unstructured Tris and Tets                      \\
+		\hline
+		Number of Triangles in Surface Mesh & 1,404                                           \\
+		\hline
+		Number of Tetrahedra in Volume Mesh & 97,410                                          \\
+		\hline
+		Number of Nodes                     & 18,162                                          \\
+		\hline
+		Height, Width, Depth                & -0.5 to 0.5 (1) -0.5 to 0.5 (1) -0.5 to 0.5 (1) \\
+		\hline
+		\hline
+	\end{tabular}
+	\caption{Mesh Properties}
+	\label{tab:mesh_properties}
+\end{table}
+
+\section{Verification}
+To properly verify that DAGMC and pumipush are simulating the same problem, we need to verify that equvalent computations are
+being done in both codes. There are multiple facets to this verification:
+
+\begin{itemize}
+	\item \textbf{Mesh}: The above section shows that the meshes used in both codes are the same. Although, for transport, DAGMC uses
+	      the surface mesh whereas pumipush uses the volume mesh for both transport and tallying. But this is not against the essence of this study.
+	\item \textbf{Material Properties}: In this simulation, a dummy material with $\Sigma_t = 100.0$ and $\Sigma_s = 100.0$ is used. This
+	      means that only scattering is happening. All the neutrons are in one group. In pumipush, it used mean free path to define the cross sections.
+	      Mean free path is defined as the inverse of the total cross section.
+	\item \textbf{Source}: A fixed source simulation is done here. The source is uniformly distributed in the entire cube.
+	      The source intensity can be different becuase we will compare the flux shape, not the nominal value. Moreover, the number of
+	      particles being simulated is given as an input parameter for both of them.
+	\item \textbf{Tally}: Only the flux tally is used in the performance analysis. Both of them use the "track-length estimator" (more
+	      explanation later).
+	\item \textbf{Event Based Method}: Paricles start their journey together and tracked until they either reach their destination or
+	      get leaked out. For both cases, \textit{vacuum boundary} condition is used.
+\end{itemize}
+
+\subsection{Mean Free Path}
+From the OpenMC documentation, the probability of a particle traveling a distance $\ell$ without interaction is given by:
+\begin{equation}
+	p(\ell) d \ell=\Sigma_t e^{-\Sigma_t \ell} d \ell
+\end{equation}
+
+where $\Sigma_t$ is the total cross section. Therefore, the random distance $\ell$ is sampled using an uniform random number $\xi$
+as follows:
+\begin{equation}
+	\ell=-\frac{\ln \xi}{\Sigma_t}
+\end{equation}
+$\xi$ is sampled from a uniform distribution between 0 and 1.
+\\
+
+In the pumipush code, it is sampled as follows:
+\begin{verbatim}
+    double rn = gen.drand(0.0, 1.0);
+    double distance = -Kokkos::log(rn) * lambda;
+\end{verbatim}
+where \texttt{rn} is the random number sampled from uniform distribution from 0 to 1.
+\\
+
+In OpenMC, the group cross sections are specified as follows:
+\begin{verbatim}
+    groups = openmc.mgxs.EnergyGroups((0,1))
+    xsdata = openmc.XSdata('steel', groups)
+    xsdata.order = 0
+
+    scatter_xs = 100.
+    xsdata.set_total([scatter_xs])
+    xsdata.set_absorption([0.])
+    xsdata.set_scatter_matrix(np.array([scatter_xs]).reshape(1,1,1))
+
+    mg_xs_file = openmc.MGXSLibrary(groups)
+    mg_xs_file.add_xsdata(xsdata)
+\end{verbatim}
+This means: a single group cross section is used where the cross section remains constant at 100.0. $\Sigma_t = \Sigma_s = 100.0$, i.e.,
+only scattering is happening and no absorption. Therefore, the mean free path ($\lambda$) is given by:
+\begin{equation}
+	\lambda = \frac{1}{\Sigma_t} = \frac{1}{100.0} = 0.01
+\end{equation}
+
+To confim that OpenMC is using this given total and scattering cross section, the results are analyzed. For verification, an
+extra tally is added (it is removed during performance analysis) to tally the total flux, total reaction rate, and total scattering
+reaction rate. There is a simple relation between flux and reaction rates:
+
+\begin{equation}
+	R_x = \Sigma_x \times \text{Flux}
+\end{equation}
+
+This implies that the $\frac{R_{\text{scattering}}}{\text{Flux}}$ will be equal to $\Sigma_s$ or 100.0. It will be the same for
+$\frac{R_{\text{total}}}{\text{Flux}}$ and $\Sigma_t$. For absorption, it will be zero.
+\\
+
+These quantities are found as follows in OpenMC:
+\begin{align}
+	\frac{R_{\text{scattering}}}{\text{Flux}} & = 100.00000000000517                 \\
+	\frac{R_{\text{total}}}{\text{Flux}}      & = 100.00000000000517                 \\
+	\frac{R_{\text{absorption}}}{\text{Flux}} & = 1.0000000000000523 \times 10^{-10}
+\end{align}
+In the above simulation 20,000 particles are used. The small difference is due to the statistical error.
+
+
+
+\subsection{Event Based Method}
+Event based method in OpenMC is implemented here:
+\begin{tcolorbox}[colback=white, colframe=black, title=Event Based Method Code]
+	\url{https://github.com/openmc-dev/openmc/blob/d30b2e801413faaee07282969955991abdf7baeb/src/simulation.cpp#L799-L849}
+\end{tcolorbox}
+
+\subsubsection*{How it Works}
+Roughly, the simulation works as follows:
+\begin{enumerate}
+	\item Determine/initialize which particle is going to do what if not already in flight in the current \textit{subiteration}.
+	\item There are specific type of events and the particles are sorted based on the even type.
+	\item All types of events happen until there is no event left.
+	\item Remove particles that have died due to various reasons.
+	\item Repeat the process until the number of particles are zero.
+\end{enumerate}
+
+% page break
+\newpage
+\section{Validation}
+To properly validate that the simulation are producing correct results, flux is tallied in both codes. They are normalized
+using the sum of the flux values and plotted in Figure \ref{fig:flux_comparison}.
+
+\begin{figure}[h!]
+	\centering
+	\begin{subfigure}{0.45\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/flux_dagmc_xplane.png}
+		\caption{DAGMC Flux}
+		\label{fig:flux_dagmc}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}{0.45\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/pumipush_flux_xy_plane.png}
+		\caption{Pumi-PIC Flux}
+		\label{fig:flux_pumipush}
+	\end{subfigure}
+	\caption{Flux comparison between DAGMC and Pumi-PIC}
+	\label{fig:flux_comparison}
+\end{figure}
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.8\textwidth]{images/flux_along_y_line.png}
+	\caption{Flux comparison along y-axis}
+	\label{fig:flux_comparison_along_y_axis}
+\end{figure}
+
+\textit{\textcolor{red}{Note to me: The left figure is blurred. Replace and make sure that they share
+		the same colorbar.}}
+\\
+
+The flux along a line that passes through the center of the cube along the y axis is plotted in Figure \ref{fig:flux_comparison_along_y_axis}.
+It shows that the flux distributions are similar in both codes. This makes sure that the
+pumipic track-length estimator implementation is correct.
+
+
+\section{Used Tools}
+\begin{table}[h!]
+	\centering
+	\begin{tabular}{c|c}
+		\hline
+		\textbf{Tool} & \textbf{Version} \\ \hline \hline
+		Pumi-PIC      & 1.2.3            \\ \hline
+		OpenMC        & 0.15.0           \\ \hline
+		MOAB          & 5.2.0            \\ \hline
+		DAGMC         & 3.2.0            \\ \hline
+		Perlmutter    &                  \\ \hline
+	\end{tabular}
+	\caption{Software Versions}
+	\label{tab:software_versions}
+\end{table}
+
+\textit{\textcolor{red}{Note to me: The above table \ref{fig:flux_comparison_along_y_axis} is not complete or correct.}}
+
+\newpage
+\section{Performance Analysis}
+The amount of work for the simulation to be completed is dependent on the following factors: (i) the number of particles being simulated,
+(ii) the average distance each particle travels (since the higher the distance, the more mesh elements it will cross), and (iii) the mesh:
+coarseness and total number of elements.
+The mesh is same for both of them and it is not varied during the analysis although it is expected to have more scalability in pumipush than
+DAGMC. It will be done later this week.
+\\
+
+In the following Figure \ref{fig:performance_analysis01}, the time taken to simulate for $\Sigma_t = 100.0$ or $\lambda = 0.01$ is shown
+for varying number of particles.
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.8\textwidth]{images/pumipic_vs_dagmc0.01.png}
+	\caption{Performance Analysis}
+	\label{fig:performance_analysis01}
+\end{figure}
+
+
+\section{Future Works}
+\begin{itemize}
+	\item \textbf{No Graveyard for Particles Warning}: Does this warning affect the performance of DAGMC?
+	\item \textbf{Varying Mesh Size}: There should be significant scalability in pumipush than DAGMC.
+	\item \textbf{Single Energy Group in DAGMC}: Now DAGMC is simulation with a single energy group but it has a range.
+	      Although my understanding is that the particles shouldn't change energy during scattering here but it is worth checking.
+	\item \textbf{Number of OpenMP Threads}: How to make sure that pumipush is using 128 threads? I have used the following command:
+	      \begin{tcolorbox}[colback=white, colframe=green, title=OMP Environment Variables]
+		      \begin{verbatim}
+export OMP_PROC_BIND=spread && export OMP_PLACES=threads && 
+export OMP_NUM_THREADS=128
+    \end{verbatim}
+	      \end{tcolorbox}
+	\item \textbf{Memory Warning During DAGMC Run}: What does the following error mean?
+	      \begin{tcolorbox}[colback=white, colframe=yellow, title=Memory Warning]
+		      \small
+		      \begin{verbatim}
+[nid004261:462725] shmem: mmap: an error occurred while determining whether or not 
+/tmp/ompi.nid004261.104431/jf.0/3845718016/shared_mem_cuda_pool.nid004261 could be created.
+[nid004261:462725] create_and_attach: unable to create shared memory 
+BTL coordinating structure :: size 134217728
+        \end{verbatim}
+	      \end{tcolorbox}
+\end{itemize}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
