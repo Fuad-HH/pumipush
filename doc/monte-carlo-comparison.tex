@@ -25,27 +25,30 @@
 %%%%%%%%%%%%%%%%%%%%% Mesh Description %%%%%%%%%%%%%%%%
 
 \section{Mesh Description}
-Two different meshes are used. DAGMC uses an \textit{unstructured surface mesh} for particle transport
+For the DAGMC simulations, two different meshes are used. DAGMC uses an \textit{unstructured surface mesh} for particle transport
 and a \textit{volume mesh} for tallying flux using the \textit{track-length} estimator.
-Mesh properties are shown in Table \ref{tab:mesh_properties}. The volume mesh is then converted to \texttt{gmsh} format
-using the \texttt{mbconvert} utility that comes with MOAB and used in the pumipush code.
+When comparing the performance of DAGMC with pumipush, two different volume meshes are used: a coarse and a fine mesh.
+The mesh properties and the side lengths are shown in Table \ref{tab:mesh_properties}.
 
 \begin{table}[h!]
 	\centering
-	\begin{tabular}{c|c}
+	\begin{tabular}{l|l}
 		\hline
-		\textbf{Parameter}                  & \textbf{Value}                                  \\  \hline \hline
-		Software used                       & Cubit                                           \\
+		\textbf{Parameter}                                 & \textbf{Value}                                  \\  \hline
 		\hline
-		Mesh Type                           & Unstructured Tris and Tets                      \\
+		Mesh Type                                          & Unstructured Tris and Tets                      \\
 		\hline
-		Number of Triangles in Surface Mesh & 1,404                                           \\
+		Height, Width, Depth                               & -0.5 to 0.5 (1) -0.5 to 0.5 (1) -0.5 to 0.5 (1) \\
 		\hline
-		Number of Tetrahedra in Volume Mesh & 97,410                                          \\
+		\textit{Fine Mesh}: \# Triangles in Surface Mesh   & 1,404                                           \\
 		\hline
-		Number of Nodes                     & 18,162                                          \\
+		\textit{Fine Mesh}: \# Tetrahedra in Volume Mesh   & \textbf{97,410}                                 \\
 		\hline
-		Height, Width, Depth                & -0.5 to 0.5 (1) -0.5 to 0.5 (1) -0.5 to 0.5 (1) \\
+		\textit{Fine Mesh}: \# Nodes                       & 18,162                                          \\
+		\hline
+		\textit{Coarse Mesh}: \# Tetrahedra in Volume Mesh & \textbf{8,805}                                  \\
+		\hline
+		\textit{Coarse Mesh}: \# Nodes                     & 1,853                                           \\
 		\hline
 		\hline
 	\end{tabular}
@@ -53,16 +56,61 @@ using the \texttt{mbconvert} utility that comes with MOAB and used in the pumipu
 	\label{tab:mesh_properties}
 \end{table}
 
+The fine and coarse meshes are shown in Figure \ref{fig:meshes}.
+\begin{figure}[h!]
+	\centering
+	\begin{subfigure}{0.50\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/finemesh3d.png}
+		\caption{Fine Mesh}
+		\label{fig:fine_mesh}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}{0.45\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/coarsemesh3d.png}
+		\caption{Coarse Mesh}
+		\label{fig:coarse_mesh}
+	\end{subfigure}
+	\caption{Fine and Coarse Meshes}
+	\label{fig:meshes}
+\end{figure}
+
+\subsubsection{Mesh Conversion Process}
+Both the surface mesh and the volume mesh are created using Coreform Cubit. For the surface mesh, it is directly exported
+to the \texttt{.h5m} format
+and used in DAGMC neutron transport. This mesh needs material information and boundary conditions. These are set up following
+the DAGMC documentation and this Coreform Cubit tutorial here:
+\begin{tcolorbox}[colback=white, colframe=black, title=Cubit Tutorial]
+	\url{https://youtu.be/2TzgTQidfwk}
+\end{tcolorbox}
+
+For the volume mesh, it can be created in any meshing software and DAGMC's \texttt{mbconvert} utility can be used to convert it to
+both \texttt{.h5m} and \texttt{.msh} formats for DAGMC (\texttt{h5m}) and pumipush (\texttt{msh}), respectively. One caveat is that
+the volume mesh seems to be
+not working directly for pumipush (the internal gmsh reader in Pumi-PIC couldn't read it). I had to reload it in gmsh and save it
+in ascii version 2 format to be read by pumipush. The following command is used to convert the volume mesh:
+\begin{tcolorbox}[colback=white, colframe=black, title=Mesh Conversion Command]
+	\begin{verbatim}
+		gmsh -o cube8k.v2-gmsh.msh -save -3 -order 1 -save_all -format msh2 cube8k.v2.msh
+	\end{verbatim}
+\end{tcolorbox}
+
+In this case, the volume mesh was created in Cubit and exported as \texttt{.e} (Exodus) format and then converted to \texttt{.msh} format
+using \texttt{mbconvert} utility. The native \texttt{.cub} format worked before but with the new mesh, it was not working.
+
 \section{Verification}
-To properly verify that DAGMC and pumipush are simulating the same problem, we need to verify that equvalent computations are
+To verify that DAGMC and pumipush are simulating the same problem, we need to verify that equvalent computations are
 being done in both codes. There are multiple facets to this verification:
 
 \begin{itemize}
 	\item \textbf{Mesh}: The above section shows that the meshes used in both codes are the same. Although, for transport, DAGMC uses
 	      the surface mesh whereas pumipush uses the volume mesh for both transport and tallying. But this is not against the essence of this study.
-	\item \textbf{Material Properties}: In this simulation, a dummy material with $\Sigma_t = 100.0$ and $\Sigma_s = 100.0$ is used. This
-	      means that only scattering is happening. All the neutrons are in one group. In pumipush, it used mean free path to define the cross sections.
-	      Mean free path is defined as the inverse of the total cross section.
+	      Later, it is also shown that even if the surface mesh is replaced by the CSG geometry, the performance remains almost the same.
+	\item \textbf{Material Properties}: In this simulation, a simple material with $\Sigma_t = 100.0$ and $\Sigma_s = 100.0$ and then
+	      $\Sigma_t = 10.0$ and $\Sigma_s = 10.0$ are used. For pumipush, $\lambda = 0.01$ and $\lambda = 0.1$ are respectively for equivalency.
+	      This means that only scattering is happening. All the neutrons are in one group. In pumipush, it used mean free path to define
+	      the cross sections. Mean free path is defined as the inverse of the total cross section.
 	\item \textbf{Source}: A fixed source simulation is done here. The source is uniformly distributed in the entire cube.
 	      The source intensity can be different becuase we will compare the flux shape, not the nominal value. Moreover, the number of
 	      particles being simulated is given as an input parameter for both of them.
@@ -78,7 +126,17 @@ From the OpenMC documentation, the probability of a particle traveling a distanc
 	p(\ell) d \ell=\Sigma_t e^{-\Sigma_t \ell} d \ell
 \end{equation}
 
-where $\Sigma_t$ is the total cross section. Therefore, the random distance $\ell$ is sampled using an uniform random number $\xi$
+where $\Sigma_t$ is the total cross section. Some exponential distributions are shown in Figure \ref{fig:exponential_distributions} as
+a visual representation of the above equation.
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.6\textwidth]{images/Exponential_distribution_pdf_-_public_domain.svg.png}
+	\caption{Exponential Distributions}
+	\label{fig:exponential_distributions}
+\end{figure}
+
+Therefore, the random distance $\ell$ is sampled using an uniform random number $\xi$
 as follows:
 \begin{equation}
 	\ell=-\frac{\ln \xi}{\Sigma_t}
@@ -154,7 +212,7 @@ Roughly, the simulation works as follows:
 
 % page break
 \newpage
-\section{Validation}
+\section{Validation of PumiPush Transport and Tallying}
 To properly validate that the simulation are producing correct results, flux is tallied in both codes. They are normalized
 using the sum of the flux values and plotted in Figure \ref{fig:flux_comparison}.
 
@@ -162,33 +220,30 @@ using the sum of the flux values and plotted in Figure \ref{fig:flux_comparison}
 	\centering
 	\begin{subfigure}{0.45\textwidth}
 		\centering
-		\includegraphics[width=\textwidth]{images/flux_dagmc_xplane.png}
-		\caption{DAGMC Flux}
+		\includegraphics[width=\textwidth]{images/dagmc_flux_yz_plane.png}
+		\caption{DAGMC Computed Flux}
 		\label{fig:flux_dagmc}
 	\end{subfigure}
 	\hfill
 	\begin{subfigure}{0.45\textwidth}
 		\centering
-		\includegraphics[width=\textwidth]{images/pumipush_flux_xy_plane.png}
-		\caption{Pumi-PIC Flux}
+		\includegraphics[width=\textwidth]{images/pumipush_flux_yz_plane.png}
+		\caption{PumiPush Computed Flux}
 		\label{fig:flux_pumipush}
 	\end{subfigure}
-	\caption{Flux comparison between DAGMC and Pumi-PIC}
+	\caption{Flux on $x=0$ Plane}
 	\label{fig:flux_comparison}
 \end{figure}
 
 \begin{figure}[h!]
 	\centering
 	\includegraphics[width=0.8\textwidth]{images/flux_along_y_line.png}
-	\caption{Flux comparison along y-axis}
+	\caption{Flux comparison along z-axis}
 	\label{fig:flux_comparison_along_y_axis}
 \end{figure}
 
-\textit{\textcolor{red}{Note to me: The left figure is blurred. Replace and make sure that they share
-		the same colorbar.}}
-\\
-
 The flux along a line that passes through the center of the cube along the y axis is plotted in Figure \ref{fig:flux_comparison_along_y_axis}.
+This is drawn with the fine mesh with $\lambda = 0.01$ and 2,000,000 particles.
 It shows that the flux distributions are similar in both codes. This makes sure that the
 pumipic track-length estimator implementation is correct.
 
@@ -196,44 +251,99 @@ pumipic track-length estimator implementation is correct.
 \section{Used Tools}
 \begin{table}[h!]
 	\centering
-	\begin{tabular}{c|c}
+	\begin{tabular}{l|l}
 		\hline
-		\textbf{Tool} & \textbf{Version} \\ \hline \hline
-		Pumi-PIC      & 1.2.3            \\ \hline
-		OpenMC        & 0.15.0           \\ \hline
-		MOAB          & 5.2.0            \\ \hline
-		DAGMC         & 3.2.0            \\ \hline
-		Perlmutter    &                  \\ \hline
+		\textbf{Tool} & \textbf{Version}        \\ \hline \hline
+		Pumi-PIC      & commit \texttt{e1b04da} \\ \hline
+		OpenMC        & 0.15.0 through mamba    \\ \hline
+		GPU           & A100 on Perlmutter      \\ \hline
 	\end{tabular}
 	\caption{Software Versions}
 	\label{tab:software_versions}
 \end{table}
 
-\textit{\textcolor{red}{Note to me: The above table \ref{fig:flux_comparison_along_y_axis} is not complete or correct.}}
 
 \newpage
 \section{Performance Analysis}
 The amount of work for the simulation to be completed is dependent on the following factors: (i) the number of particles being simulated,
 (ii) the average distance each particle travels (since the higher the distance, the more mesh elements it will cross), and (iii) the mesh:
 coarseness and total number of elements.
-The mesh is same for both of them and it is not varied during the analysis although it is expected to have more scalability in pumipush than
-DAGMC. It will be done later this week.
-\\
 
+
+\subsection{Fine Mesh}
 In the following Figure \ref{fig:performance_analysis01}, the time taken to simulate for $\Sigma_t = 100.0$ or $\lambda = 0.01$ is shown
 for varying number of particles.
 \begin{figure}[h!]
 	\centering
-	\includegraphics[width=0.8\textwidth]{images/pumipic_vs_dagmc0.01.png}
-	\caption{Performance Analysis}
-	\label{fig:performance_analysis01}
+	\begin{subfigure}{0.49\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/pumipic_vs_dagmc0.01.png}
+		\caption{Performance Analysis for $\lambda = 0.01$}
+		\label{fig:performance_analysis01}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}{0.49\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/pumipic_vs_dagmc0.1.png}
+		\caption{Performance Analysis for $\lambda = 0.1$}
+		\label{fig:performance_analysis1}
+	\end{subfigure}
+	\caption{Performance Analysis on the Fine Mesh}
+	\label{fig:performance_analysis_combined}
 \end{figure}
 
+For the case of $\lambda = 0.1$ (Figure \ref{fig:performance_analysis1}) the pumipush code is much faster than $0.01$ case. It is due to following reasons:
+\begin{itemize}
+	\item The particles are moving further in the mesh and the leakage rate is higher. Therefore, it needs less
+	      number of subiterations to complete the simulation.
+	\item For the same reason, the \texttt{search\_mesh} method has more work at once on GPU (to search the intersected
+	      mesh faces and elements) and it is more efficient rather that multiple kernel launches.
+\end{itemize}
 
+The \texttt{DAGMC with CSG} line in Figure \ref{fig:performance_analysis1} shows the simulation time for the case where only the flux tally is computed on
+the unstructured mesh and the transport is done using the CSG gemoetry rather than the surface mesh used before.
+It implies that finding out where the particles are in the mesh is not the bottleneck for DAGMC but the mesh traversal for tallying
+is.
+
+\subsection{Coarse Mesh}
+To understand how the scalability seen in the fine mesh case translates to the coarse mesh, the performance analysis is done on the
+coarse mesh which is about 10 times coarser. Since, it is already seen for DAGMC that the performance is not affected significantly
+when CSG geometry is used, I continued to used CSG geometry for the coarse mesh case.
+The results are shown in Figure \ref{fig:performance_analysis_coarse}.
+
+\begin{figure}[h!]
+	\centering
+	\begin{subfigure}{0.49\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/pumipic_vs_dagmc_coarse0.01.png}
+		\caption{Simulation Time for $\lambda = 0.01$}
+		\label{fig:performance_analysis01_coarse}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}{0.49\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{images/pumipic_vs_dagmc_coarse0.1.png}
+		\caption{Simulation Time for $\lambda = 0.1$}
+		\label{fig:performance_analysis1_coarse}
+	\end{subfigure}
+	\caption{Performance Analysis on the Coarse Mesh}
+	\label{fig:performance_analysis_coarse}
+\end{figure}
+
+The trends remain same for the coarse mesh as well. The speedup due to the coarseness of the mesh is shown in Figure \ref{fig:speedup}.
+It is interesting that the speedup is not close to 10 but it is higher for the case of $\lambda = 0.1$ as expected due to higher number of
+line face intersections.
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.6\textwidth]{images/speedup_coarse_to_fine.png}
+	\caption{Speedup Due to Coarseness of the Mesh}
+	\label{fig:speedup}
+\end{figure}
+
+\newpage
 \section{Future Works}
 \begin{itemize}
-	\item \textbf{No Graveyard for Particles Warning}: Does this warning affect the performance of DAGMC?
-	\item \textbf{Varying Mesh Size}: There should be significant scalability in pumipush than DAGMC.
 	\item \textbf{Single Energy Group in DAGMC}: Now DAGMC is simulation with a single energy group but it has a range.
 	      Although my understanding is that the particles shouldn't change energy during scattering here but it is worth checking.
 	\item \textbf{Number of OpenMP Threads}: How to make sure that pumipush is using 128 threads? I have used the following command:
